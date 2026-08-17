@@ -1,0 +1,50 @@
+package com.xdl.xledger.ui.navigation
+
+import com.composables.icons.lucide.R as LucideR
+
+/**
+ * 应用路由定义。
+ *
+ * 底部 Tab 由 [MainTab] 枚举承载（图标 + 标签 + 路由一一对应）；
+ * 其余为覆盖 Tab 栏的全屏子页面。
+ */
+object Route {
+
+    /** Tab 嵌套图容器。 */
+    const val MAIN = "main"
+
+    /** 账本主页（底部 Tab）。 */
+    const val HOME = "home"
+
+    /** 资产页（底部 Tab）。 */
+    const val ASSETS = "assets"
+
+    /** 设置页（底部 Tab）。 */
+    const val SETTINGS = "settings"
+
+    /** 截图导入页（全屏子页）。 */
+    const val UPLOAD = "upload"
+
+    /** 分类管理页（全屏子页）。 */
+    const val CATEGORIES = "categories"
+
+    /** LLM 配置页（全屏子页）。 */
+    const val LLM_SETTINGS = "llm_settings"
+
+    /** 分类统计页（全屏子页，带年月参数）。 */
+    const val MONTHLY_CATEGORY_STATS = "monthly_category_stats?year={year}&month={month}"
+
+    fun monthlyCategoryStats(year: Int, month: Int): String =
+        "monthly_category_stats?year=$year&month=$month"
+}
+
+/** 底部 Tab 定义。 */
+enum class MainTab(
+    val route: String,
+    val label: String,
+    val iconRes: Int,
+) {
+    Home(route = Route.HOME, label = "账本", iconRes = LucideR.drawable.lucide_ic_house),
+    Assets(route = Route.ASSETS, label = "资产", iconRes = LucideR.drawable.lucide_ic_wallet),
+    Settings(route = Route.SETTINGS, label = "设置", iconRes = LucideR.drawable.lucide_ic_settings),
+}
