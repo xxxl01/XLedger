@@ -17,6 +17,9 @@ import kotlinx.coroutines.launch
 
 /** 分类管理页 UI 状态。 */
 data class CategoriesUiState(
+    /** 当前展示的收支类型：0 = 支出，1 = 收入。 */
+    val selectedType: Int = CategoryEntity.TYPE_EXPENSE,
+    /** 当前类型的全部分类（一级和二级混在一起，由界面组织成树）。 */
     val categories: List<CategoryEntity> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
@@ -39,11 +42,18 @@ class CategoriesViewModel(
         loadCategories()
     }
 
+    fun switchType(transactionType: Int) {
+        if (_uiState.value.selectedType == transactionType) return
+        _uiState.update { it.copy(selectedType = transactionType) }
+        loadCategories()
+    }
+
     fun loadCategories() {
         viewModelScope.launch {
+            val type = _uiState.value.selectedType
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             try {
-                val categories = categoryRepository.getAll()
+                val categories = categoryRepository.getByType(type)
                 _uiState.update { it.copy(categories = categories, isLoading = false) }
             } catch (error: Exception) {
                 Log.w(TAG, "加载分类失败", error)
@@ -54,21 +64,31 @@ class CategoriesViewModel(
         }
     }
 
-    /** 新增分类；名称为空或已存在时返回 false。 */
-    suspend fun createCategory(name: String): Boolean {
+    /**
+     * 新增分类（类型跟随当前 Tab）。
+     *
+     * @param parentId 为 null 时新增一级分类；非 null 时新增该一级下的二级分类。
+     * @return 是否创建成功。
+     */
+    suspend fun createCategory(name: String, parentId: Int? = null): Boolean {
+        val type = _uiState.value.selectedType
         val trimmed = name.trim()
         if (trimmed.isEmpty()) {
             _message.value = "分类名称不能为空"
             return false
         }
-        if (_uiState.value.categories.any { it.categoryName == trimmed }) {
-            _message.value = "分类已存在"
+        // 同级下不允许重名
+        val duplicated = _uiState.value.categories.any { category ->
+            category.parentId == parentId && category.categoryName == trimmed
+        }
+        if (duplicated) {
+            _message.value = "同级下已存在同名分类"
             return false
         }
 
         _isSaving.value = true
         try {
-            categoryRepository.create(trimmed)
+            categoryRepository.create(trimmed, type, parentId)
             loadCategories()
             return true
         } catch (error: Exception) {
@@ -80,7 +100,7 @@ class CategoriesViewModel(
         }
     }
 
-    /** 删除分类并自动解除相关交易关联。 */
+    /** 删除分类并自动解除相关交易关联（一级分类连同二级一起删除）。 */
     suspend fun deleteCategory(categoryId: Int) {
         try {
             categoryRepository.deleteCategoryAndUnassignTransactions(categoryId)

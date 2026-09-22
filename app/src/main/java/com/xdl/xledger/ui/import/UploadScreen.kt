@@ -20,19 +20,25 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
@@ -40,7 +46,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,10 +58,14 @@ import com.xdl.xledger.ui.theme.xledgerColors
 import com.xdl.xledger.util.BitmapLoader
 import com.xdl.xledger.util.DateTimeFormat
 import com.xdl.xledger.util.MoneyFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 
 /**
  * 截图导入页：选择支付记录截图 → 压缩 → LLM 识别 → 勾选入库。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun UploadScreen(
     onBack: () -> Unit,
@@ -64,6 +73,7 @@ fun UploadScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    var showDebugDialog by remember { mutableStateOf(false) }
 
     val pickImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(),
@@ -75,6 +85,10 @@ fun UploadScreen(
         val text = uiState.message ?: return@LaunchedEffect
         snackbarHostState.showSnackbar(text)
         viewModel.consumeMessage()
+        // 解析失败时自动弹出原始返回，便于调试
+        if (uiState.llmDebug?.parseError != null) {
+            showDebugDialog = true
+        }
     }
 
     SubPageScaffold(
@@ -105,7 +119,7 @@ fun UploadScreen(
                 item(key = "images") {
                     ImagePanel(
                         state = uiState,
-                        onYearChange = viewModel::setTransactionYear,
+                        onTodayDateChange = viewModel::setTodayDate,
                         onPickImages = {
                             pickImageLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -123,7 +137,10 @@ fun UploadScreen(
 
                 if (uiState.step == UploadStep.Review) {
                     item(key = "review_header") {
-                        ReviewHeader(state = uiState)
+                        ReviewHeader(
+                            state = uiState,
+                            onShowDebug = { showDebugDialog = true },
+                        )
                     }
                     itemsIndexed(uiState.candidates) { index, candidate ->
                         CandidateRow(
@@ -151,6 +168,16 @@ fun UploadScreen(
                 )
                 else -> Unit
             }
+        }
+    }
+
+    // LLM 原始返回调试对话框
+    if (showDebugDialog) {
+        uiState.llmDebug?.let { debug ->
+            LlmDebugDialog(
+                debug = debug,
+                onDismiss = { showDebugDialog = false },
+            )
         }
     }
 }
@@ -238,14 +265,16 @@ private enum class StepStatus { Pending, Active, Done }
 
 // ---- 图片面板 ----
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ImagePanel(
     state: UploadUiState,
-    onYearChange: (String) -> Unit,
+    onTodayDateChange: (LocalDate) -> Unit,
     onPickImages: () -> Unit,
     onRemoveImage: (String) -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
+    var showDatePicker by remember { mutableStateOf(false) }
 
     Column {
         Row(
@@ -253,27 +282,49 @@ private fun ImagePanel(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(
-                text = if (state.selectedImages.isNotEmpty()) {
-                    "已选择 ${state.selectedImages.size} 张截图"
-                } else {
-                    "支付记录截图"
-                },
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = colors.textPrimary,
-                modifier = Modifier.weight(1f),
-            )
-            OutlinedTextField(
-                value = state.transactionYear,
-                onValueChange = onYearChange,
-                singleLine = true,
-                enabled = !state.isWorking,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.size(width = 72.dp, height = 44.dp),
-                shape = RoundedCornerShape(8.dp),
-                textStyle = MaterialTheme.typography.bodyMedium,
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (state.selectedImages.isNotEmpty()) {
+                        "已选择 ${state.selectedImages.size} 张截图"
+                    } else {
+                        "支付记录截图"
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary,
+                )
+                Text(
+                    text = "今天是哪天",
+                    fontSize = 11.sp,
+                    color = colors.textSecondary,
+                )
+            }
+            // “今天是哪天”日期选择框：支付宝截图里最新日期常为“今天”这类相对日期
+            Box(
+                modifier = Modifier
+                    .border(1.dp, colors.inputBorder, RoundedCornerShape(8.dp))
+                    .clickable(enabled = !state.isWorking, onClick = { showDatePicker = true })
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(LucideR.drawable.lucide_ic_calendar),
+                        contentDescription = null,
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                    Text(
+                        text = state.todayDate.toString(),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textPrimary,
+                    )
+                }
+            }
             if (state.selectedImages.isNotEmpty()) {
                 Box(
                     modifier = Modifier
@@ -321,6 +372,38 @@ private fun ImagePanel(
                     )
                 }
             }
+        }
+    }
+
+    if (showDatePicker) {
+        // DatePicker 的选中毫秒按 UTC 零点解释，避免时区偏移导致日期错一天
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = state.todayDate
+                .atStartOfDay(ZoneOffset.UTC)
+                .toInstant()
+                .toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { millis ->
+                            onTodayDateChange(
+                                Instant.ofEpochMilli(millis)
+                                    .atZone(ZoneOffset.UTC)
+                                    .toLocalDate(),
+                            )
+                        }
+                        showDatePicker = false
+                    },
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+            },
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
 }
@@ -419,7 +502,10 @@ private fun WorkingPanel(step: UploadStep) {
 // ---- 候选列表 ----
 
 @Composable
-private fun ReviewHeader(state: UploadUiState) {
+private fun ReviewHeader(
+    state: UploadUiState,
+    onShowDebug: () -> Unit,
+) {
     val colors = MaterialTheme.xledgerColors
     val duplicateCount = state.candidates.count { it.isDuplicate }
     val selectedDuplicateCount = state.candidates.filterIndexed { index, c ->
@@ -441,10 +527,25 @@ private fun ReviewHeader(state: UploadUiState) {
         )
         if (duplicateCount > 0) {
             Text(
-                text = "重复 $selectedDuplicateCount / $duplicateCount 条",
+                text = "可能重复 $selectedDuplicateCount / $duplicateCount 条",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = colors.duplicate,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .padding(start = 6.dp)
+                .border(1.dp, colors.inputBorder, RoundedCornerShape(6.dp))
+                .clickable(onClick = onShowDebug)
+                .padding(4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(LucideR.drawable.lucide_ic_eye),
+                contentDescription = "查看 LLM 原始返回",
+                tint = colors.accent,
+                modifier = Modifier.size(16.dp),
             )
         }
     }
@@ -504,7 +605,8 @@ private fun CandidateRow(
             Text(
                 text = buildString {
                     append(DateTimeFormat.formatTime(candidate.occurredAt))
-                    if (candidate.isDuplicate) append(" · 重复")
+                    candidate.categoryName?.let { append(" · $it") }
+                    if (candidate.isDuplicate) append(" · 可能重复")
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = colors.textSecondary,

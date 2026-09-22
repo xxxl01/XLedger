@@ -19,6 +19,9 @@ object Route {
     /** 资产页（底部 Tab）。 */
     const val ASSETS = "assets"
 
+    /** 省钱页（底部 Tab）。 */
+    const val SAVINGS = "savings"
+
     /** 设置页（底部 Tab）。 */
     const val SETTINGS = "settings"
 
@@ -30,6 +33,15 @@ object Route {
 
     /** LLM 配置页（全屏子页）。 */
     const val LLM_SETTINGS = "llm_settings"
+
+    /** 抵消记录页（全屏子页）。 */
+    const val OFFSETS = "offsets"
+
+    /** 交易编辑页（全屏子页，带交易 id 参数）。 */
+    const val EDIT_TRANSACTION = "edit_transaction?transactionId={transactionId}"
+
+    fun editTransaction(transactionId: Int): String =
+        "edit_transaction?transactionId=$transactionId"
 
     /** 分类统计页（全屏子页，带年月参数）。 */
     const val MONTHLY_CATEGORY_STATS = "monthly_category_stats?year={year}&month={month}"
@@ -45,6 +57,7 @@ enum class MainTab(
     val iconRes: Int,
 ) {
     Home(route = Route.HOME, label = "账本", iconRes = LucideR.drawable.lucide_ic_house),
+    Savings(route = Route.SAVINGS, label = "省钱", iconRes = LucideR.drawable.lucide_ic_piggy_bank),
     Assets(route = Route.ASSETS, label = "资产", iconRes = LucideR.drawable.lucide_ic_wallet),
     Settings(route = Route.SETTINGS, label = "设置", iconRes = LucideR.drawable.lucide_ic_settings),
 }

@@ -10,8 +10,25 @@ class CategoryRepository(
     private val transactionDao: TransactionDao,
 ) {
 
-    suspend fun create(categoryName: String, categoryIcon: String = "•"): CategoryEntity {
-        val id = dao.insert(CategoryEntity(categoryName = categoryName, categoryIcon = categoryIcon))
+    /**
+     * 新增分类。
+     *
+     * @param parentId 为 null 时创建一级分类；非 null 时创建该一级下的二级分类。
+     */
+    suspend fun create(
+        categoryName: String,
+        transactionType: Int,
+        parentId: Int? = null,
+    ): CategoryEntity {
+        val sortOrder = dao.maxSortOrder(transactionType, parentId) + 1
+        val id = dao.insert(
+            CategoryEntity(
+                categoryName = categoryName,
+                transactionType = transactionType,
+                parentId = parentId,
+                sortOrder = sortOrder,
+            ),
+        )
         return dao.getById(id.toInt())!!
     }
 
@@ -19,20 +36,26 @@ class CategoryRepository(
 
     suspend fun getAll(): List<CategoryEntity> = dao.getAll()
 
-    suspend fun update(
-        categoryId: Int,
-        categoryName: String,
-        categoryIcon: String,
-    ): CategoryEntity? {
-        dao.update(categoryId, categoryName, categoryIcon)
-        return dao.getById(categoryId)
+    suspend fun getByType(transactionType: Int): List<CategoryEntity> = dao.getByType(transactionType)
+
+    suspend fun rename(categoryId: Int, categoryName: String): Boolean {
+        dao.updateName(categoryId, categoryName)
+        return dao.getById(categoryId) != null
     }
 
-    suspend fun delete(categoryId: Int): Boolean = dao.deleteById(categoryId) > 0
-
-    /** 删除分类并解除相关交易的关联（对应旧版 deleteCategoryAndUnassignTransactions）。 */
+    /**
+     * 删除分类并解除相关交易关联：
+     * - 一级分类：连同其下全部二级分类一起删除，相关交易全部置为未分类
+     * - 二级分类：仅删除自身，相关交易置为未分类
+     */
     suspend fun deleteCategoryAndUnassignTransactions(categoryId: Int): Boolean {
-        transactionDao.clearCategory(categoryId)
-        return dao.deleteById(categoryId) > 0
+        val category = dao.getById(categoryId) ?: return false
+        return if (category.parentId == null) {
+            transactionDao.clearCategoryWithChildren(categoryId)
+            dao.deleteWithChildren(categoryId) > 0
+        } else {
+            transactionDao.clearCategory(categoryId)
+            dao.deleteById(categoryId) > 0
+        }
     }
 }

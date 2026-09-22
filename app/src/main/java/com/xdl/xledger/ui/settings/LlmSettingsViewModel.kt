@@ -24,6 +24,7 @@ data class LlmSettingsUiState(
     val baseUrl: String = DEFAULT_LLM_BASE_URL,
     val apiKey: String = "",
     val model: String = DEFAULT_LLM_MODEL,
+    val enableThinking: Boolean = false,
     val savedMessage: String? = null,
     val errorMessage: String? = null,
 )
@@ -46,12 +47,14 @@ class LlmSettingsViewModel(
                 val baseUrl = configRepository.getValue(LlmConfigKeys.BASE_URL)
                 val apiKey = configRepository.getValue(LlmConfigKeys.API_KEY)
                 val model = configRepository.getValue(LlmConfigKeys.MODEL)
+                val enableThinking = configRepository.getValue(LlmConfigKeys.ENABLE_THINKING) == "true"
                 _uiState.update {
                     it.copy(
                         isLoading = false,
                         baseUrl = baseUrl ?: DEFAULT_LLM_BASE_URL,
                         apiKey = apiKey.orEmpty(),
                         model = model ?: DEFAULT_LLM_MODEL,
+                        enableThinking = enableThinking,
                     )
                 }
             } catch (error: Exception) {
@@ -75,6 +78,10 @@ class LlmSettingsViewModel(
         _uiState.update { it.copy(model = value) }
     }
 
+    fun onEnableThinkingChange(value: Boolean) {
+        _uiState.update { it.copy(enableThinking = value) }
+    }
+
     /** 保存配置；任一字段为空时返回 false。 */
     suspend fun save(): Boolean {
         val state = _uiState.value
@@ -91,6 +98,10 @@ class LlmSettingsViewModel(
             configRepository.setConfig(LlmConfigKeys.BASE_URL, baseUrl)
             configRepository.setConfig(LlmConfigKeys.API_KEY, apiKey)
             configRepository.setConfig(LlmConfigKeys.MODEL, model)
+            configRepository.setConfig(
+                LlmConfigKeys.ENABLE_THINKING,
+                if (state.enableThinking) "true" else "false",
+            )
             _uiState.update {
                 it.copy(isSaving = false, savedMessage = "LLM 配置已更新", baseUrl = baseUrl, model = model)
             }

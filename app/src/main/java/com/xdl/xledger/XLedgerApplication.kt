@@ -6,6 +6,7 @@ import com.xdl.xledger.data.remote.LlmApiService
 import com.xdl.xledger.data.repository.AssetRepository
 import com.xdl.xledger.data.repository.CategoryRepository
 import com.xdl.xledger.data.repository.ConfigRepository
+import com.xdl.xledger.data.repository.SavingRepository
 import com.xdl.xledger.data.repository.TransactionRepository
 
 /**
@@ -16,7 +17,7 @@ class XLedgerApplication : Application() {
     val database: AppDatabase by lazy { AppDatabase.getInstance(this) }
 
     val transactionRepository: TransactionRepository by lazy {
-        TransactionRepository(database.transactionDao())
+        TransactionRepository(database.transactionDao(), database.offsetDao(), database)
     }
 
     val assetRepository: AssetRepository by lazy {
@@ -29,6 +30,10 @@ class XLedgerApplication : Application() {
 
     val configRepository: ConfigRepository by lazy {
         ConfigRepository(database.configDao())
+    }
+
+    val savingRepository: SavingRepository by lazy {
+        SavingRepository(database.savingDao())
     }
 
     val llmApiService: LlmApiService by lazy {

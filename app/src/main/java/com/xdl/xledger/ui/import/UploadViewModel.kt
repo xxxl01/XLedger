@@ -8,8 +8,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.xdl.xledger.XLedgerApplication
+import com.xdl.xledger.data.db.entity.CategoryEntity
 import com.xdl.xledger.data.remote.LlmApiService
+import com.xdl.xledger.data.remote.LlmParseDebugResult
 import com.xdl.xledger.data.remote.ParsedTransaction
+import com.xdl.xledger.data.repository.CategoryRepository
 import com.xdl.xledger.data.repository.TransactionRepository
 import com.xdl.xledger.util.ImageCompressor
 import kotlinx.coroutines.Dispatchers
@@ -27,12 +30,16 @@ enum class UploadStep { Pick, Ready, Compress, Llm, Review, Saving }
 /** 已选图片。 */
 data class SelectedImage(val uri: String)
 
-/** 识别候选（带重复标记）。 */
+    /** 识别候选（带“可能重复”提示标记，仅为提示不阻止入库）。 */
 data class ImportCandidate(
     val occurredAt: String,
     val transactionType: Int,
     val amount: String,
     val description: String?,
+    /** 已映射到用户已有分类的分类 id，匹配不到则为 null（未分类）。 */
+    val categoryId: Int? = null,
+    /** LLM 识别出的分类名，仅用于展示。 */
+    val categoryName: String? = null,
     val isDuplicate: Boolean,
 )
 
@@ -40,24 +47,28 @@ data class ImportCandidate(
 data class UploadUiState(
     val step: UploadStep = UploadStep.Pick,
     val isWorking: Boolean = false,
-    val transactionYear: String = LocalDate.now().year.toString(),
+    /** “今天是哪天”：截图中的相对日期（今天/昨天）与月日按此日期补全。 */
+    val todayDate: LocalDate = LocalDate.now(),
     val selectedImages: List<SelectedImage> = emptyList(),
     val candidates: List<ImportCandidate> = emptyList(),
     val selectedIndexes: Set<Int> = emptySet(),
     val message: String? = null,
+    /** 最近一次识别的 LLM 原始返回（调试用）。 */
+    val llmDebug: LlmParseDebugResult? = null,
 )
 
 class UploadViewModel(
     application: XLedgerApplication,
     private val transactionRepository: TransactionRepository,
+    private val categoryRepository: CategoryRepository,
     private val llmApiService: LlmApiService,
 ) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow(UploadUiState())
     val uiState: StateFlow<UploadUiState> = _uiState.asStateFlow()
 
-    fun setTransactionYear(value: String) {
-        _uiState.update { it.copy(transactionYear = value) }
+    fun setTodayDate(date: LocalDate) {
+        _uiState.update { it.copy(todayDate = date) }
     }
 
     /** 选择图片后进入 ready 步骤，并清空上次识别结果。 */
@@ -68,6 +79,7 @@ class UploadViewModel(
             it.copy(
                 selectedImages = uris.map { SelectedImage(it) },
                 step = UploadStep.Ready,
+                llmDebug = null,
             )
         }
     }
@@ -83,14 +95,9 @@ class UploadViewModel(
         resetRecognitionResult()
     }
 
-    /** 开始识别：压缩 → LLM 解析 → 标记重复 → 进入筛选。 */
+    /** 开始识别：压缩 → LLM 解析 → 标记可能重复 → 进入筛选。 */
     fun startRecognition() {
         val state = _uiState.value
-        val year = state.transactionYear.trim()
-        if (!Regex("^\\d{4}$").matches(year)) {
-            _uiState.update { it.copy(message = "年份无效，请输入 4 位年份") }
-            return
-        }
         if (state.selectedImages.isEmpty()) {
             _uiState.update { it.copy(message = "未选择图片，请先选择支付记录截图") }
             return
@@ -108,8 +115,28 @@ class UploadViewModel(
                 }
 
                 _uiState.update { it.copy(step = UploadStep.Llm) }
-                val parsed = llmApiService.parseTransactionsFromImages(compressed, year)
-                val candidates = markDuplicates(parsed)
+                // 传“今天是哪天”，让模型把截图中的相对日期与月日补全为具体日期；
+                // 同时把用户已有分类传给模型，让它直接从候选分类里选，入库时不再手动整理
+                val categories = categoryRepository.getAll()
+                val debugResult = llmApiService.parseTransactionsFromImagesWithDebug(
+                    compressed,
+                    state.todayDate.toString(),
+                    categories,
+                )
+                _uiState.update { it.copy(llmDebug = debugResult) }
+
+                if (debugResult.parseError != null) {
+                    _uiState.update {
+                        it.copy(
+                            isWorking = false,
+                            step = UploadStep.Ready,
+                            message = "LLM 返回无法解析，已展示原始返回供排查",
+                        )
+                    }
+                    return@launch
+                }
+
+                val candidates = markDuplicates(debugResult.transactions, categories)
 
                 _uiState.update {
                     it.copy(
@@ -178,10 +205,10 @@ class UploadViewModel(
                         amount = it.amount,
                         occurredAt = it.occurredAt,
                         description = it.description,
-                        isDuplicate = it.isDuplicate,
+                        categoryId = it.categoryId,
                     )
                 }
-                val created = transactionRepository.createSelectedTransactionsAllowingDuplicates(items)
+                val created = transactionRepository.createSelectedTransactions(items)
                 resetRecognitionResult()
                 _uiState.update {
                     it.copy(
@@ -211,7 +238,15 @@ class UploadViewModel(
         _uiState.update { it.copy(candidates = emptyList(), selectedIndexes = emptySet()) }
     }
 
-    private suspend fun markDuplicates(parsed: List<ParsedTransaction>): List<ImportCandidate> {
+    /** 清除调试结果（重新选图时）。 */
+    fun clearDebugResult() {
+        _uiState.update { it.copy(llmDebug = null) }
+    }
+
+    private suspend fun markDuplicates(
+        parsed: List<ParsedTransaction>,
+        categories: List<CategoryEntity>,
+    ): List<ImportCandidate> {
         val inputs = parsed.map {
             TransactionRepository.CreateTransactionInput(
                 transactionType = it.transactionType,
@@ -231,14 +266,32 @@ class UploadViewModel(
                 transaction.transactionType,
             )
             val isDuplicate = existingKeys.contains(key) || !seenKeys.add(key)
+            val categoryId = matchCategoryId(transaction.categoryName, transaction.transactionType, categories)
             ImportCandidate(
                 occurredAt = transaction.occurredAt,
                 transactionType = transaction.transactionType,
                 amount = transaction.amount,
                 description = transaction.description,
+                categoryId = categoryId,
+                categoryName = if (categoryId != null) transaction.categoryName else null,
                 isDuplicate = isDuplicate,
             )
         }
+    }
+
+    /**
+     * 把 LLM 识别出的分类名精确匹配到用户已有分类：
+     * 只在该收支类型的分类里匹配，优先匹配二级分类（更具体），其次一级；匹配不到返回 null（未分类）。
+     */
+    private fun matchCategoryId(
+        categoryName: String?,
+        transactionType: Int,
+        categories: List<CategoryEntity>,
+    ): Int? {
+        if (categoryName.isNullOrBlank()) return null
+        val pool = categories.filter { it.transactionType == transactionType }
+        return pool.firstOrNull { it.parentId != null && it.categoryName == categoryName }?.categoryId
+            ?: pool.firstOrNull { it.parentId == null && it.categoryName == categoryName }?.categoryId
     }
 
     companion object {
@@ -251,6 +304,7 @@ class UploadViewModel(
                 UploadViewModel(
                     application = application,
                     transactionRepository = application.transactionRepository,
+                    categoryRepository = application.categoryRepository,
                     llmApiService = application.llmApiService,
                 )
             }

@@ -7,10 +7,12 @@
 - 按月查看收支流水，支持支出 / 收入 / 未分类筛选
 - 月度支出、收入、结余汇总
 - 编辑 / 删除单条交易，编辑时可设置分类或新建分类
+- 收入抵消支出：用一笔收入抵消一笔支出，两边金额各扣减抵消额，完全抵消的记录保留为 0 元
 - 分类管理，删除分类时自动解除相关交易关联
 - 资产账户管理（新增 / 编辑账户和余额）
+- 省钱记录：按月记录「项目名称 + 原价 + 实付」，自动统计每条与整月省下的金额
 - 分类统计（按月查看支出 / 收入分类占比）
-- 截图导入：多图选择 → 压缩 → LLM 识别 → 勾选确认后入库（自动重复检测）
+- 截图导入：多图选择 → 压缩 → LLM 识别 → 勾选确认后入库（自动标记“可能重复”提示，不阻止入库）
 - 应用内 LLM 配置（Base URL / API Key / Model）
 
 ## 技术栈
@@ -43,7 +45,9 @@ app/src/main/java/com/xdl/xledger/
 │   ├── theme/                 语义色板（Light/Dark）+ Shapes + Typography
 │   ├── home/                  账本主页 + 编辑弹窗
 │   ├── assets/                资产页
+│   ├── savings/               省钱页 + 新增/编辑弹窗
 │   ├── categories/            分类管理页
+│   ├── offsets/               抵消记录页
 │   ├── settings/              设置页 + LLM 配置页
 │   ├── stats/                 分类统计页
 │   ├── import/                截图导入页
@@ -55,10 +59,22 @@ app/src/main/java/com/xdl/xledger/
 
 | 表 | 说明 |
 |---|---|
-| `transactions` | 收支记录，`transaction_type` 0=支出 1=收入，`dedupe_key` 唯一去重 |
+| `transactions` | 收支记录，`transaction_type` 0=支出 1=收入，`amount` 为当前剩余金额，`dedupe_key` 仅用于重复提示 |
+| `offsets` | 抵消台账，一行 = 一次抵消，关联 `income_id` / `expense_id` 与本次抵消金额 |
 | `assets` | 资产账户及余额 |
+| `savings` | 省钱记录，省下金额 = `original_amount - actual_amount`，不落库 |
 | `categories` | 交易分类 |
 | `configs` | 本地键值配置（含 LLM 设置） |
+
+## 抵消规则
+
+在账本里点开一笔收入 → **抵消支出**，按月翻页选一笔支出（候选只列该月仍有剩余金额的支出，不全表查询）：
+
+- 抵消金额 = `min(收入剩余, 支出剩余)`，两边金额各扣减该值，全程以「分」做整数运算
+- 完全抵消的记录金额留为 `0.00`，记录不删除，列表里弱化显示并标注「已抵消」
+- 首次被抵消时在描述后追加 `（原支出 ¥60.00）` 留痕，再次被抵消不重复追加
+- `amount` 始终等于当前剩余金额，因此各处汇总与分类统计无需过滤（统计本就跳过 0 金额）
+- 一笔支出可被多笔收入分次抵消，每次抵消在 `offsets` 表留一行，明细可在 **设置 → 抵消记录** 查看
 
 ## LLM 配置
 
@@ -67,5 +83,5 @@ app/src/main/java/com/xdl/xledger/
 ## 说明
 
 - 时间存储为 UTC ISO-8601（`.000Z`），展示按本地时区转换，与旧版行为一致。
-- 金额以两位小数字符串存储，去重键为 `occurred_at_amount_transaction_type`。
+- 金额以两位小数字符串存储，去重键为 `occurred_at_amount_transaction_type`，仅用于导入时“可能重复”提示，无数据库唯一约束，是否保留重复记录由用户决定。
 - 网络访问自建 LLM 服务时允许明文 HTTP（`usesCleartextTraffic`），正式发布可改为 network security config 白名单。

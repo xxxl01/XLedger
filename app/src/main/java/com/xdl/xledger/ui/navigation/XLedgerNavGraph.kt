@@ -21,8 +21,11 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.xdl.xledger.ui.assets.AssetsScreen
 import com.xdl.xledger.ui.categories.CategoriesScreen
+import com.xdl.xledger.ui.edit.TransactionEditScreen
 import com.xdl.xledger.ui.home.HomeScreen
 import com.xdl.xledger.ui.import.UploadScreen
+import com.xdl.xledger.ui.offsets.OffsetsScreen
+import com.xdl.xledger.ui.savings.SavingsScreen
 import com.xdl.xledger.ui.settings.LlmSettingsScreen
 import com.xdl.xledger.ui.settings.SettingsScreen
 import com.xdl.xledger.ui.stats.MonthlyCategoryStatsScreen
@@ -31,7 +34,7 @@ import com.xdl.xledger.ui.theme.xledgerColors
 /**
  * 根导航图：
  *
- * - `main` 嵌套图承载底部 Tab（账本 / 资产 / 设置），Tab 之间独立保存状态；
+ * - `main` 嵌套图承载底部 Tab（账本 / 省钱 / 资产 / 设置），Tab 之间独立保存状态；
  * - 上传、分类、LLM 配置、分类统计为全屏子页，覆盖 Tab 栏。
  */
 @Composable
@@ -48,6 +51,10 @@ fun XLedgerNavGraph() {
                 onOpenUpload = { navController.navigate(Route.UPLOAD) },
                 onOpenCategories = { navController.navigate(Route.CATEGORIES) },
                 onOpenLlmSettings = { navController.navigate(Route.LLM_SETTINGS) },
+                onOpenOffsets = { navController.navigate(Route.OFFSETS) },
+                onOpenTransactionEdit = { transactionId ->
+                    navController.navigate(Route.editTransaction(transactionId))
+                },
                 onOpenMonthlyCategoryStats = { year, month ->
                     navController.navigate(Route.monthlyCategoryStats(year, month))
                 },
@@ -64,6 +71,23 @@ fun XLedgerNavGraph() {
 
         composable(Route.LLM_SETTINGS) {
             LlmSettingsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(Route.OFFSETS) {
+            OffsetsScreen(onBack = { navController.popBackStack() })
+        }
+
+        composable(
+            route = Route.EDIT_TRANSACTION,
+            arguments = listOf(
+                navArgument("transactionId") { type = NavType.IntType },
+            ),
+        ) { backStackEntry ->
+            val transactionId = backStackEntry.arguments?.getInt("transactionId") ?: 0
+            TransactionEditScreen(
+                transactionId = transactionId,
+                onBack = { navController.popBackStack() },
+            )
         }
 
         composable(
@@ -93,6 +117,8 @@ private fun MainTabScaffold(
     onOpenUpload: () -> Unit,
     onOpenCategories: () -> Unit,
     onOpenLlmSettings: () -> Unit,
+    onOpenOffsets: () -> Unit,
+    onOpenTransactionEdit: (Int) -> Unit,
     onOpenMonthlyCategoryStats: (year: Int, month: Int) -> Unit,
 ) {
     val tabNavController = rememberNavController()
@@ -138,14 +164,21 @@ private fun MainTabScaffold(
                 HomeScreen(
                     onOpenUpload = onOpenUpload,
                     onOpenCategories = onOpenCategories,
+                    onOpenTransactionEdit = onOpenTransactionEdit,
                     onOpenMonthlyCategoryStats = onOpenMonthlyCategoryStats,
                 )
+            }
+            composable(Route.SAVINGS) {
+                SavingsScreen()
             }
             composable(Route.ASSETS) {
                 AssetsScreen()
             }
             composable(Route.SETTINGS) {
-                SettingsScreen(onOpenLlmSettings = onOpenLlmSettings)
+                SettingsScreen(
+                    onOpenLlmSettings = onOpenLlmSettings,
+                    onOpenOffsets = onOpenOffsets,
+                )
             }
         }
     }

@@ -11,13 +11,13 @@ import androidx.room.PrimaryKey
  * - [transactionType]: 0 = 支出, 1 = 收入
  * - [amount]: 两位小数字符串（如 "28.50"），与 dedupe_key 拼接逻辑保持一致
  * - [occurredAt]: ISO-8601 UTC 字符串（如 "2026-05-04T04:30:00.000Z"）
- * - [dedupeKey]: `occurred_at_amount_transaction_type`，用于导入去重
+ * - [dedupeKey]: `occurred_at_amount_transaction_type`，仅用于导入时“可能重复”提示，
+ *   不设唯一约束：是否保留重复记录由用户自行决定。
  */
 @Entity(
     tableName = "transactions",
     indices = [
         Index(value = ["occurred_at"]),
-        Index(value = ["dedupe_key"], unique = true),
     ],
 )
 data class TransactionEntity(

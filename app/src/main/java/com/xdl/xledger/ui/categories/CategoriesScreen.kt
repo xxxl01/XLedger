@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.composables.icons.lucide.R as LucideR
@@ -45,7 +45,11 @@ import com.xdl.xledger.ui.theme.xledgerColors
 import kotlinx.coroutines.launch
 
 /**
- * 分类管理页：新增 / 删除自定义分类，删除时自动解除相关交易关联。
+ * 分类管理页：按支出 / 收入 Tab 管理两级分类。
+ *
+ * - 一级分类可展开 / 收起其下二级分类
+ * - 顶部输入框新增一级分类；一级分类行的“+”内联输入新增二级分类
+ * - 删除一级分类会连同其下全部二级分类一起删除，相关交易变为未分类
  */
 @Composable
 fun CategoriesScreen(
@@ -59,7 +63,11 @@ fun CategoriesScreen(
     val colors = MaterialTheme.xledgerColors
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
     var newCategoryName by remember { mutableStateOf("") }
+    var expandedParents by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var addingChildFor by remember { mutableStateOf<Int?>(null) }
+    var childName by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<CategoryEntity?>(null) }
 
     LaunchedEffect(message) {
@@ -67,9 +75,13 @@ fun CategoriesScreen(
         snackbarHostState.showSnackbar(text)
         viewModel.consumeMessage()
     }
-    LaunchedEffect(uiState.errorMessage) {
-        val text = uiState.errorMessage ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(text)
+
+    // 当前类型下的一级分类与二级分类映射
+    val parents = remember(uiState.categories) {
+        uiState.categories.filter { it.parentId == null }
+    }
+    val childrenByParent = remember(uiState.categories) {
+        uiState.categories.filter { it.parentId != null }.groupBy { it.parentId!! }
     }
 
     SubPageScaffold(
@@ -83,18 +95,27 @@ fun CategoriesScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp),
         ) {
-            Row(
+            TypeTabRow(
+                selected = uiState.selectedType,
+                onSelect = viewModel::switchType,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 4.dp),
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 OutlinedTextField(
                     value = newCategoryName,
                     onValueChange = { newCategoryName = it },
-                    placeholder = { Text("分类名称") },
+                    placeholder = { Text("新增一级分类") },
                     singleLine = true,
+                    enabled = !isSaving,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(8.dp),
                 )
@@ -130,23 +151,93 @@ fun CategoriesScreen(
                         CircularProgressIndicator(color = colors.accent)
                     }
                 }
-                else -> CategoryList(
-                    categories = uiState.categories,
-                    onDelete = { pendingDelete = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                )
+                else -> {
+                    if (parents.isEmpty()) {
+                        EmptyHint(
+                            text = "还没有${if (uiState.selectedType == CategoryEntity.TYPE_EXPENSE) "支出" else "收入"}分类",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 16.dp),
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentPadding = PaddingValues(top = 14.dp, bottom = 32.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            parents.forEach { parent ->
+                                item(key = "parent_${parent.categoryId}") {
+                                    ParentRow(
+                                        category = parent,
+                                        expanded = expandedParents.contains(parent.categoryId),
+                                        childCount = childrenByParent[parent.categoryId].orEmpty().size,
+                                        enabled = !isSaving,
+                                        onToggle = {
+                                            expandedParents = if (it in expandedParents) {
+                                                expandedParents - it
+                                            } else {
+                                                expandedParents + it
+                                            }
+                                        },
+                                        onAddChild = {
+                                            addingChildFor = parent.categoryId
+                                            childName = ""
+                                        },
+                                        onDelete = { pendingDelete = parent },
+                                    )
+                                }
+                                if (expandedParents.contains(parent.categoryId)) {
+                                    childrenByParent[parent.categoryId].orEmpty().forEach { child ->
+                                        item(key = "child_${child.categoryId}") {
+                                            ChildRow(
+                                                category = child,
+                                                enabled = !isSaving,
+                                                onDelete = { pendingDelete = child },
+                                            )
+                                        }
+                                    }
+                                    if (addingChildFor == parent.categoryId) {
+                                        item(key = "child_input_${parent.categoryId}") {
+                                            ChildAddRow(
+                                                value = childName,
+                                                enabled = !isSaving,
+                                                onValueChange = { childName = it },
+                                                onConfirm = {
+                                                    scope.launch {
+                                                        if (viewModel.createCategory(childName, parent.categoryId)) {
+                                                            childName = ""
+                                                            addingChildFor = null
+                                                        }
+                                                    }
+                                                },
+                                                onCancel = { addingChildFor = null },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
     pendingDelete?.let { category ->
+        val isParent = category.parentId == null
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            title = { Text("删除分类") },
+            title = { Text(if (isParent) "删除分类及子分类" else "删除分类") },
             text = {
-                Text("删除「${category.categoryName}」后，相关交易将变为未分类。此操作不可撤销。")
+                Text(
+                    if (isParent) {
+                        "删除「${category.categoryName}」及其全部子分类后，相关交易将变为未分类。此操作不可撤销。"
+                    } else {
+                        "删除「${category.categoryName}」后，相关交易将变为未分类。此操作不可撤销。"
+                    },
+                )
             },
             confirmButton = {
                 TextButton(
@@ -169,73 +260,240 @@ fun CategoriesScreen(
     }
 }
 
+/** 支出 / 收入 切换。 */
 @Composable
-private fun CategoryList(
-    categories: List<CategoryEntity>,
-    onDelete: (CategoryEntity) -> Unit,
+private fun TypeTabRow(
+    selected: Int,
+    onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.xledgerColors
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        TypeTabItem(
+            label = "支出",
+            active = selected == CategoryEntity.TYPE_EXPENSE,
+            onClick = { onSelect(CategoryEntity.TYPE_EXPENSE) },
+            modifier = Modifier.weight(1f),
+        )
+        TypeTabItem(
+            label = "收入",
+            active = selected == CategoryEntity.TYPE_INCOME,
+            onClick = { onSelect(CategoryEntity.TYPE_INCOME) },
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
 
-    if (categories.isEmpty()) {
-        Column(
-            modifier = modifier
-                .padding(top = 16.dp)
-                .background(colors.card, RoundedCornerShape(8.dp))
-                .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = "还没有分类",
-                style = MaterialTheme.typography.titleMedium,
-                color = colors.textPrimary,
+@Composable
+private fun TypeTabItem(
+    label: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.xledgerColors
+    Box(
+        modifier = modifier
+            .border(
+                width = 1.dp,
+                color = if (active) colors.accent else colors.inputBorder,
+                shape = RoundedCornerShape(8.dp),
             )
+            .background(
+                color = if (active) colors.accentContainer else colors.card,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+            color = if (active) colors.accent else colors.textSecondary,
+        )
+    }
+}
+
+/** 一级分类行：展开箭头 + 名称 + 子分类数 + 添加二级 + 删除。 */
+@Composable
+private fun ParentRow(
+    category: CategoryEntity,
+    expanded: Boolean,
+    childCount: Int,
+    enabled: Boolean,
+    onToggle: (Int) -> Unit,
+    onAddChild: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = MaterialTheme.xledgerColors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colors.card, RoundedCornerShape(8.dp))
+            .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = { onToggle(category.categoryId) })
+            .padding(horizontal = 10.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            painter = painterResource(
+                if (expanded) LucideR.drawable.lucide_ic_chevron_down
+                else LucideR.drawable.lucide_ic_chevron_right,
+            ),
+            contentDescription = if (expanded) "收起" else "展开",
+            tint = colors.textSecondary,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(
+            text = category.categoryName,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = colors.textPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        if (childCount > 0) {
             Text(
-                text = "新增后可在编辑记录时选择。",
-                style = MaterialTheme.typography.bodySmall,
+                text = "$childCount 个",
+                fontSize = 12.sp,
                 color = colors.textSecondary,
             )
         }
-        return
+        Icon(
+            painter = painterResource(LucideR.drawable.lucide_ic_plus),
+            contentDescription = "添加子分类",
+            tint = colors.accent,
+            modifier = Modifier
+                .clickable(enabled = enabled, onClick = onAddChild)
+                .padding(6.dp)
+                .size(18.dp),
+        )
+        Icon(
+            painter = painterResource(LucideR.drawable.lucide_ic_trash_2),
+            contentDescription = "删除",
+            tint = colors.expense,
+            modifier = Modifier
+                .clickable(enabled = enabled, onClick = onDelete)
+                .padding(6.dp)
+                .size(18.dp),
+        )
     }
+}
 
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(top = 14.dp, bottom = 32.dp),
+/** 二级分类行：缩进展示 + 删除。 */
+@Composable
+private fun ChildRow(
+    category: CategoryEntity,
+    enabled: Boolean,
+    onDelete: () -> Unit,
+) {
+    val colors = MaterialTheme.xledgerColors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 30.dp)
+            .background(colors.background, RoundedCornerShape(8.dp))
+            .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = category.categoryName,
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.textPrimary,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            painter = painterResource(LucideR.drawable.lucide_ic_trash_2),
+            contentDescription = "删除",
+            tint = colors.expense,
+            modifier = Modifier
+                .clickable(enabled = enabled, onClick = onDelete)
+                .padding(6.dp)
+                .size(18.dp),
+        )
+    }
+}
+
+/** 行内新增二级分类输入。 */
+@Composable
+private fun ChildAddRow(
+    value: String,
+    enabled: Boolean,
+    onValueChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    val colors = MaterialTheme.xledgerColors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 30.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text("子分类名称") },
+            singleLine = true,
+            enabled = enabled,
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(8.dp),
+        )
+        Box(
+            modifier = Modifier
+                .border(1.dp, colors.inputBorder, RoundedCornerShape(8.dp))
+                .clickable(enabled = enabled, onClick = onConfirm)
+                .padding(horizontal = 10.dp, vertical = 9.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "确定",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = colors.textPrimary,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .clickable(enabled = enabled, onClick = onCancel)
+                .padding(horizontal = 4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "取消",
+                fontSize = 13.sp,
+                color = colors.textSecondary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun EmptyHint(text: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.xledgerColors
+    Column(
+        modifier = modifier
+            .background(colors.card, RoundedCornerShape(8.dp))
+            .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        items(categories, key = { it.categoryId }) { category ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.card, RoundedCornerShape(8.dp))
-                    .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = category.categoryName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.textPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                Box(
-                    modifier = Modifier
-                        .clickable { onDelete(category) }
-                        .padding(6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(LucideR.drawable.lucide_ic_trash_2),
-                        contentDescription = "删除",
-                        tint = colors.expense,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleMedium,
+            color = colors.textPrimary,
+        )
+        Text(
+            text = "分类区分支出 / 收入，一级分类下可添加子分类。",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary,
+        )
     }
 }

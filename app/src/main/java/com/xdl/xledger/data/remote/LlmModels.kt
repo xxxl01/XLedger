@@ -4,59 +4,63 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
-/** LLM 请求体（OpenAI Responses API 兼容）。 */
+// ---- Chat Completions 请求体（DeepSeek / OpenAI 兼容）----
+
 @Serializable
-data class LlmRequest(
+data class ChatCompletionsRequest(
     val model: String,
-    val input: List<LlmMessage>,
-    val text: LlmTextConfig = LlmTextConfig(),
+    val messages: List<ChatMessage>,
+    /** 千问等混合思考模型：false 直接回答（JSON 输出建议关闭），true 先思考再回答。 */
+    @SerialName("enable_thinking")
+    val enableThinking: Boolean? = null,
 )
 
 @Serializable
-data class LlmTextConfig(
-    val format: LlmTextFormat = LlmTextFormat(),
-)
-
-@Serializable
-data class LlmTextFormat(
-    val type: String = "json_object",
-)
-
-@Serializable
-data class LlmMessage(
+data class ChatMessage(
     val role: String,
-    val content: List<LlmContentItem>,
+    val content: List<ChatContentItem>,
 )
 
 @Serializable
-data class LlmContentItem(
+data class ChatContentItem(
     val type: String,
     val text: String? = null,
     @SerialName("image_url")
-    val imageUrl: String? = null,
-    val detail: String? = null,
+    val imageUrl: ChatImageUrl? = null,
 )
 
-/** LLM 响应。 */
+@Serializable
+data class ChatImageUrl(
+    val url: String,
+)
+
+// ---- Chat Completions 响应 ----
+
 @Serializable
 data class LlmResponse(
-    @SerialName("output_text")
-    val outputText: String? = null,
-    val output: List<LlmResponseOutput>? = null,
+    val choices: List<LlmResponseChoice>? = null,
 )
 
 @Serializable
-data class LlmResponseOutput(
-    val content: List<LlmResponseContent>? = null,
+data class LlmResponseChoice(
+    val message: LlmResponseMessage? = null,
 )
 
 @Serializable
-data class LlmResponseContent(
-    val type: String? = null,
-    val text: String? = null,
+data class LlmResponseMessage(
+    /** 可能是字符串，也可能是 OpenAI 新版数组形式 [{type:"text",...}]，用 JsonElement 兼容。 */
+    val content: JsonElement? = null,
+    /** DeepSeek 推理模型（R1 类）的思考过程。 */
+    @SerialName("reasoning_content")
+    val reasoningContent: String? = null,
+    /** OpenAI 风格推理字段名。 */
+    val reasoning: String? = null,
+    /** 部分平台（如部分国产模型网关）的思考字段名。 */
+    val thinking: String? = null,
 )
 
-/** LLM 返回的交易 JSON payload。 */
+// ---- 交易 JSON payload ----
+
 @Serializable
 data class LlmTransactionPayload(
     val transactions: List<LlmTransactionRow>? = null,
@@ -70,7 +74,11 @@ data class LlmTransactionRow(
     val transactionType: JsonElement? = null,
     val amount: JsonElement? = null,
     val description: String? = null,
+    /** LLM 给出的分类名（从提示词给定的用户候选分类中选择）。 */
+    val category: String? = null,
 )
+
+// ---- 归一化结果 ----
 
 /** 归一化后的解析结果。 */
 data class ParsedTransaction(
@@ -78,4 +86,18 @@ data class ParsedTransaction(
     val transactionType: Int,
     val amount: String,
     val description: String?,
+    /** LLM 给出的分类名，尚未映射到用户已有分类 id。 */
+    val categoryName: String? = null,
+)
+
+/** 带调试信息的解析结果：保留模型原始返回与思考过程，便于排查识别问题。 */
+data class LlmParseDebugResult(
+    val transactions: List<ParsedTransaction>,
+    val apiUrl: String,
+    val model: String,
+    val responseContent: String,
+    /** 模型的思考过程（reasoning_content），无则为 null。 */
+    val reasoningContent: String? = null,
+    /** 请求成功但返回内容无法解析时非空。 */
+    val parseError: String? = null,
 )

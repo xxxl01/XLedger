@@ -13,3 +13,8 @@
 .externalNativeBuild
 .cxx
 local.properties
+*.jks
+keystore.properties
+
+# Gradle Wrapper jar 是构建基础设施，必须随仓库提交
+!gradle/wrapper/gradle-wrapper.jar

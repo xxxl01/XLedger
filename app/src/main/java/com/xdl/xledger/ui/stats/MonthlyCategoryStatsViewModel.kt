@@ -17,20 +17,30 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-/** 单个分类的统计行。 */
+/** 单个分类的统计行（一级聚合行或二级明细行）。 */
 data class CategoryStat(
     val key: String,
     val name: String,
     val amount: Double,
+    /** 占比：一级行相对该收支类型总额；二级行相对其一级分类金额。 */
     val percent: Double,
+)
+
+/** 一级分类聚合行，可展开查看二级明细。 */
+data class CategoryGroup(
+    val categoryId: Int?,
+    val name: String,
+    val amount: Double,
+    val percent: Double,
+    val children: List<CategoryStat>,
 )
 
 /** 分类统计页 UI 状态。 */
 data class MonthlyCategoryStatsUiState(
     val year: Int,
     val month: Int,
-    val expenseStats: List<CategoryStat> = emptyList(),
-    val incomeStats: List<CategoryStat> = emptyList(),
+    val expenseStats: List<CategoryGroup> = emptyList(),
+    val incomeStats: List<CategoryGroup> = emptyList(),
     val expenseTotal: Double = 0.0,
     val incomeTotal: Double = 0.0,
     val isLoading: Boolean = false,
@@ -60,8 +70,8 @@ class MonthlyCategoryStatsViewModel(
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        expenseStats = buildStats(transactions, categories, TransactionEntity.TYPE_EXPENSE),
-                        incomeStats = buildStats(transactions, categories, TransactionEntity.TYPE_INCOME),
+                        expenseStats = buildGroups(transactions, categories, TransactionEntity.TYPE_EXPENSE),
+                        incomeStats = buildGroups(transactions, categories, TransactionEntity.TYPE_INCOME),
                         expenseTotal = sumOf(transactions, TransactionEntity.TYPE_EXPENSE),
                         incomeTotal = sumOf(transactions, TransactionEntity.TYPE_INCOME),
                     )
@@ -75,29 +85,77 @@ class MonthlyCategoryStatsViewModel(
         }
     }
 
-    private fun buildStats(
+    /**
+     * 按一级分类聚合统计：
+     * - 交易属于二级分类时归入其一级分类
+     * - 一级分类的二级明细记录在 [CategoryGroup.children]
+     * - 无分类或分类已删除的交易归入“未分类”
+     */
+    private fun buildGroups(
         transactions: List<TransactionEntity>,
         categories: List<CategoryEntity>,
         transactionType: Int,
-    ): List<CategoryStat> {
+    ): List<CategoryGroup> {
         val categoryById = categories.associateBy { it.categoryId }
-        val amounts = LinkedHashMap<String, Pair<String, Double>>()
+        data class Agg(
+            val name: String,
+            var amount: Double = 0.0,
+            val children: LinkedHashMap<String, Double> = LinkedHashMap(),
+        )
+        val aggs = LinkedHashMap<String, Agg>()
 
         for (transaction in transactions) {
             if (transaction.transactionType != transactionType) continue
-            val key = transaction.categoryId?.toString() ?: "uncategorized"
-            val name = transaction.categoryId?.let(categoryById::get)?.categoryName ?: "未分类"
-            val current = amounts[key] ?: (name to 0.0)
-            amounts[key] = current.first to (current.second + (transaction.amount.toDoubleOrNull() ?: 0.0))
+            val amount = transaction.amount.toDoubleOrNull() ?: 0.0
+            if (amount <= 0) continue
+
+            val category = transaction.categoryId?.let(categoryById::get)
+            when {
+                category == null -> {
+                    val agg = aggs.getOrPut("uncategorized") { Agg("未分类") }
+                    agg.amount += amount
+                }
+                category.parentId == null -> {
+                    val agg = aggs.getOrPut("c${category.categoryId}") { Agg(category.categoryName) }
+                    agg.amount += amount
+                }
+                else -> {
+                    val parent = category.parentId?.let(categoryById::get)
+                    if (parent != null) {
+                        val agg = aggs.getOrPut("c${parent.categoryId}") { Agg(parent.categoryName) }
+                        agg.amount += amount
+                        agg.children[category.categoryName] =
+                            (agg.children[category.categoryName] ?: 0.0) + amount
+                    } else {
+                        // 父分类缺失（正常删除流程会级联清理），按自身作为一级展示
+                        val agg = aggs.getOrPut("c${category.categoryId}") { Agg(category.categoryName) }
+                        agg.amount += amount
+                    }
+                }
+            }
         }
 
-        val rows = amounts.map { (key, value) -> CategoryStat(key, value.first, value.second, 0.0) }
-            .filter { it.amount > 0 }
-            .sortedByDescending { it.amount }
-        val total = rows.sumOf { it.amount }
+        val rows = aggs.map { (key, agg) ->
+            val children = agg.children
+                .map { (name, childAmount) -> CategoryStat(key = "$key#$name", name = name, amount = childAmount, percent = 0.0) }
+                .sortedByDescending { it.amount }
+            CategoryGroup(
+                categoryId = key.removePrefix("c").toIntOrNull(),
+                name = agg.name,
+                amount = agg.amount,
+                percent = 0.0,
+                children = children,
+            )
+        }.filter { it.amount > 0 }.sortedByDescending { it.amount }
 
-        return rows.map { stat ->
-            stat.copy(percent = if (total > 0) stat.amount / total else 0.0)
+        val total = rows.sumOf { it.amount }
+        return rows.map { group ->
+            group.copy(
+                percent = if (total > 0) group.amount / total else 0.0,
+                children = group.children.map { child ->
+                    child.copy(percent = if (group.amount > 0) child.amount / group.amount else 0.0)
+                },
+            )
         }
     }
 
