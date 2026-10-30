@@ -11,12 +11,14 @@ import com.xdl.xledger.data.db.dao.CategoryDao
 import com.xdl.xledger.data.db.dao.ConfigDao
 import com.xdl.xledger.data.db.dao.OffsetDao
 import com.xdl.xledger.data.db.dao.SavingDao
+import com.xdl.xledger.data.db.dao.StorageDao
 import com.xdl.xledger.data.db.dao.TransactionDao
 import com.xdl.xledger.data.db.entity.AssetEntity
 import com.xdl.xledger.data.db.entity.CategoryEntity
 import com.xdl.xledger.data.db.entity.ConfigEntity
 import com.xdl.xledger.data.db.entity.OffsetEntity
 import com.xdl.xledger.data.db.entity.SavingEntity
+import com.xdl.xledger.data.db.entity.StorageEntity
 import com.xdl.xledger.data.db.entity.TransactionEntity
 
 @Database(
@@ -27,8 +29,9 @@ import com.xdl.xledger.data.db.entity.TransactionEntity
         ConfigEntity::class,
         SavingEntity::class,
         OffsetEntity::class,
+        StorageEntity::class,
     ],
-    version = 5,
+    version = 7,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,6 +42,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun configDao(): ConfigDao
     abstract fun savingDao(): SavingDao
     abstract fun offsetDao(): OffsetDao
+    abstract fun storageDao(): StorageDao
 
     companion object {
         private const val DATABASE_NAME = "x-ledger.db"
@@ -123,6 +127,33 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 → v6：新增储藏记录。 */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS storage_items (" +
+                        "storage_id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "item_name TEXT NOT NULL, " +
+                        "total_amount TEXT NOT NULL, " +
+                        "remaining_amount TEXT NOT NULL, " +
+                        "deduction_amount TEXT NOT NULL, " +
+                        "created_at TEXT NOT NULL, " +
+                        "note TEXT)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_storage_items_created_at " +
+                        "ON storage_items(created_at)",
+                )
+            }
+        }
+
+        /** v6 → v7：记录储藏最近一次扣除时间。 */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE storage_items ADD COLUMN last_deducted_at TEXT")
+            }
+        }
+
         @Volatile
         private var instance: AppDatabase? = null
 
@@ -134,7 +165,14 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     DATABASE_NAME,
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6,
+                        MIGRATION_6_7,
+                    )
                     .build()
                     .also { instance = it }
             }

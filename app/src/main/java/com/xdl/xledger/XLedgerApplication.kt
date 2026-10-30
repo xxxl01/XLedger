@@ -7,6 +7,7 @@ import com.xdl.xledger.data.repository.AssetRepository
 import com.xdl.xledger.data.repository.CategoryRepository
 import com.xdl.xledger.data.repository.ConfigRepository
 import com.xdl.xledger.data.repository.SavingRepository
+import com.xdl.xledger.data.repository.StorageRepository
 import com.xdl.xledger.data.repository.TransactionRepository
 
 /**
@@ -34,6 +35,10 @@ class XLedgerApplication : Application() {
 
     val savingRepository: SavingRepository by lazy {
         SavingRepository(database.savingDao())
+    }
+
+    val storageRepository: StorageRepository by lazy {
+        StorageRepository(database.storageDao())
     }
 
     val llmApiService: LlmApiService by lazy {
