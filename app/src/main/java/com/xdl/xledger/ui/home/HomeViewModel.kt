@@ -10,6 +10,7 @@ import com.xdl.xledger.XLedgerApplication
 import com.xdl.xledger.data.db.entity.CategoryEntity
 import com.xdl.xledger.data.db.entity.TransactionEntity
 import com.xdl.xledger.data.repository.CategoryRepository
+import com.xdl.xledger.data.repository.ConfigRepository
 import com.xdl.xledger.data.repository.TransactionRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,6 +35,8 @@ data class HomeUiState(
     val filter: TransactionFilter = TransactionFilter.All,
     val transactions: List<TransactionEntity> = emptyList(),
     val categories: List<CategoryEntity> = emptyList(),
+    /** 隐藏收入：列表与汇总里不显示收入（持久化在本地配置里）。 */
+    val hideIncome: Boolean = false,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
 )
@@ -46,6 +49,7 @@ data class HomeUiState(
 class HomeViewModel(
     private val transactionRepository: TransactionRepository,
     private val categoryRepository: CategoryRepository,
+    private val configRepository: ConfigRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
@@ -53,6 +57,7 @@ class HomeViewModel(
 
     init {
         refresh()
+        loadHideIncome()
     }
 
     /**
@@ -78,7 +83,30 @@ class HomeViewModel(
         _uiState.update { it.copy(filter = filter) }
     }
 
+    fun toggleHideIncome() {
+        val next = !_uiState.value.hideIncome
+        _uiState.update { it.copy(hideIncome = next) }
+        viewModelScope.launch {
+            try {
+                configRepository.setConfig(HIDE_INCOME_KEY, next.toString())
+            } catch (error: Exception) {
+                Log.w(TAG, "保存隐藏收入设置失败", error)
+            }
+        }
+    }
+
     // ---- 数据加载 ----
+
+    private fun loadHideIncome() {
+        viewModelScope.launch {
+            try {
+                val hidden = configRepository.getValue(HIDE_INCOME_KEY) == "true"
+                _uiState.update { it.copy(hideIncome = hidden) }
+            } catch (error: Exception) {
+                Log.w(TAG, "读取隐藏收入设置失败", error)
+            }
+        }
+    }
 
     private fun loadTransactions(showLoading: Boolean) {
         viewModelScope.launch {
@@ -113,6 +141,7 @@ class HomeViewModel(
 
     companion object {
         private const val TAG = "HomeViewModel"
+        private const val HIDE_INCOME_KEY = "home_hide_income"
 
         val Factory: ViewModelProvider.Factory = viewModelFactory {
             initializer {
@@ -121,6 +150,7 @@ class HomeViewModel(
                 HomeViewModel(
                     transactionRepository = application.transactionRepository,
                     categoryRepository = application.categoryRepository,
+                    configRepository = application.configRepository,
                 )
             }
         }

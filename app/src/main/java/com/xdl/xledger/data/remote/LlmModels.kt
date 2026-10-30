@@ -74,8 +74,6 @@ data class LlmTransactionRow(
     val transactionType: JsonElement? = null,
     val amount: JsonElement? = null,
     val description: String? = null,
-    /** LLM 给出的分类名（从提示词给定的用户候选分类中选择）。 */
-    val category: String? = null,
 )
 
 // ---- 归一化结果 ----
@@ -86,8 +84,6 @@ data class ParsedTransaction(
     val transactionType: Int,
     val amount: String,
     val description: String?,
-    /** LLM 给出的分类名，尚未映射到用户已有分类 id。 */
-    val categoryName: String? = null,
 )
 
 /** 带调试信息的解析结果：保留模型原始返回与思考过程，便于排查识别问题。 */

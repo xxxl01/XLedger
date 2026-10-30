@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.xdl.xledger.XLedgerApplication
-import com.xdl.xledger.data.db.entity.CategoryEntity
 import com.xdl.xledger.data.remote.LlmApiService
 import com.xdl.xledger.data.remote.LlmParseDebugResult
 import com.xdl.xledger.data.remote.ParsedTransaction
@@ -36,9 +35,9 @@ data class ImportCandidate(
     val transactionType: Int,
     val amount: String,
     val description: String?,
-    /** 已映射到用户已有分类的分类 id，匹配不到则为 null（未分类）。 */
+    /** 按名称从库里同名历史交易带出的分类 id，找不到则为 null（未分类）。 */
     val categoryId: Int? = null,
-    /** LLM 识别出的分类名，仅用于展示。 */
+    /** 带出的分类名，仅用于展示。 */
     val categoryName: String? = null,
     val isDuplicate: Boolean,
 )
@@ -116,12 +115,10 @@ class UploadViewModel(
 
                 _uiState.update { it.copy(step = UploadStep.Llm) }
                 // 传“今天是哪天”，让模型把截图中的相对日期与月日补全为具体日期；
-                // 同时把用户已有分类传给模型，让它直接从候选分类里选，入库时不再手动整理
-                val categories = categoryRepository.getAll()
+                // 分类不交给模型，识别后由程序按名称到库里找同名交易带出
                 val debugResult = llmApiService.parseTransactionsFromImagesWithDebug(
                     compressed,
                     state.todayDate.toString(),
-                    categories,
                 )
                 _uiState.update { it.copy(llmDebug = debugResult) }
 
@@ -136,7 +133,7 @@ class UploadViewModel(
                     return@launch
                 }
 
-                val candidates = markDuplicates(debugResult.transactions, categories)
+                val candidates = markDuplicates(debugResult.transactions)
 
                 _uiState.update {
                     it.copy(
@@ -245,7 +242,6 @@ class UploadViewModel(
 
     private suspend fun markDuplicates(
         parsed: List<ParsedTransaction>,
-        categories: List<CategoryEntity>,
     ): List<ImportCandidate> {
         val inputs = parsed.map {
             TransactionRepository.CreateTransactionInput(
@@ -259,6 +255,12 @@ class UploadViewModel(
         val existingKeys = transactionRepository.getExistingDedupeKeys(inputs)
         val seenKeys = mutableSetOf<String>()
 
+        // 按名称到库里找同名历史交易的分类；同名但分类已被删除时取不到名字，按未分类处理
+        val categoryById = categoryRepository.getAll().associateBy { it.categoryId }
+        val categoryIdByName = transactionRepository.findCategoryIdsByDescription(
+            parsed.mapNotNull { t -> t.description?.let { it to t.transactionType } },
+        )
+
         return parsed.map { transaction ->
             val key = transactionRepository.createDedupeKey(
                 transaction.occurredAt,
@@ -266,32 +268,19 @@ class UploadViewModel(
                 transaction.transactionType,
             )
             val isDuplicate = existingKeys.contains(key) || !seenKeys.add(key)
-            val categoryId = matchCategoryId(transaction.categoryName, transaction.transactionType, categories)
+            val category = transaction.description
+                ?.let { categoryIdByName[it to transaction.transactionType] }
+                ?.let(categoryById::get)
             ImportCandidate(
                 occurredAt = transaction.occurredAt,
                 transactionType = transaction.transactionType,
                 amount = transaction.amount,
                 description = transaction.description,
-                categoryId = categoryId,
-                categoryName = if (categoryId != null) transaction.categoryName else null,
+                categoryId = category?.categoryId,
+                categoryName = category?.categoryName,
                 isDuplicate = isDuplicate,
             )
         }
-    }
-
-    /**
-     * 把 LLM 识别出的分类名精确匹配到用户已有分类：
-     * 只在该收支类型的分类里匹配，优先匹配二级分类（更具体），其次一级；匹配不到返回 null（未分类）。
-     */
-    private fun matchCategoryId(
-        categoryName: String?,
-        transactionType: Int,
-        categories: List<CategoryEntity>,
-    ): Int? {
-        if (categoryName.isNullOrBlank()) return null
-        val pool = categories.filter { it.transactionType == transactionType }
-        return pool.firstOrNull { it.parentId != null && it.categoryName == categoryName }?.categoryId
-            ?: pool.firstOrNull { it.parentId == null && it.categoryName == categoryName }?.categoryId
     }
 
     companion object {

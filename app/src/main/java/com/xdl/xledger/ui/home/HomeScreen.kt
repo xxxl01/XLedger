@@ -77,6 +77,7 @@ fun HomeScreen(
         uiState = uiState,
         onShiftMonth = viewModel::shiftMonth,
         onSelectFilter = viewModel::setFilter,
+        onToggleHideIncome = viewModel::toggleHideIncome,
         onOpenEdit = onOpenTransactionEdit,
         onOpenUpload = onOpenUpload,
         onOpenCategories = onOpenCategories,
@@ -92,6 +93,7 @@ private fun HomeContent(
     uiState: HomeUiState,
     onShiftMonth: (Int) -> Unit,
     onSelectFilter: (TransactionFilter) -> Unit,
+    onToggleHideIncome: () -> Unit,
     onOpenEdit: (Int) -> Unit,
     onOpenUpload: () -> Unit,
     onOpenCategories: () -> Unit,
@@ -99,6 +101,21 @@ private fun HomeContent(
     onRetry: () -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
+    val hideIncome = uiState.hideIncome
+    // 隐藏收入时，收入记录整体不进入列表；汇总里的收入和结余（结余会暴露收入）单独遮住
+    val visibleTransactions = remember(uiState.transactions, hideIncome) {
+        if (hideIncome) {
+            uiState.transactions.filter { it.transactionType != TransactionEntity.TYPE_INCOME }
+        } else {
+            uiState.transactions
+        }
+    }
+    // 隐藏收入时“收入”筛选没有意义，回落到“全部”
+    val filter = if (hideIncome && uiState.filter == TransactionFilter.Income) {
+        TransactionFilter.All
+    } else {
+        uiState.filter
+    }
     val summary = remember(uiState.transactions) {
         var expense = 0.0
         var income = 0.0
@@ -115,9 +132,9 @@ private fun HomeContent(
     val categoryById = remember(uiState.categories) {
         uiState.categories.associateBy { it.categoryId }
     }
-    val filteredTransactions = remember(uiState.transactions, uiState.filter) {
-        uiState.transactions.filter { transaction ->
-            when (uiState.filter) {
+    val filteredTransactions = remember(visibleTransactions, filter) {
+        visibleTransactions.filter { transaction ->
+            when (filter) {
                 TransactionFilter.All -> true
                 TransactionFilter.Expense ->
                     transaction.transactionType == TransactionEntity.TYPE_EXPENSE
@@ -141,6 +158,8 @@ private fun HomeContent(
             year = uiState.year,
             month = uiState.month,
             onShiftMonth = onShiftMonth,
+            hideIncome = hideIncome,
+            onToggleHideIncome = onToggleHideIncome,
             onOpenCategories = onOpenCategories,
             onOpenUpload = onOpenUpload,
         )
@@ -149,11 +168,13 @@ private fun HomeContent(
             expense = summary.first,
             income = summary.second,
             balance = summary.third,
+            hideIncome = hideIncome,
             onClick = onOpenMonthlyCategoryStats,
         )
 
         FilterRow(
-            selected = uiState.filter,
+            selected = filter,
+            hideIncome = hideIncome,
             onSelect = onSelectFilter,
         )
 
@@ -181,6 +202,7 @@ private fun HomeContent(
                 TransactionList(
                     groupedByDay = groupedByDay,
                     categoryById = categoryById,
+                    hideIncome = hideIncome,
                     onOpenEdit = onOpenEdit,
                     modifier = Modifier.weight(1f),
                 )
@@ -194,6 +216,8 @@ private fun HomeHeader(
     year: Int,
     month: Int,
     onShiftMonth: (Int) -> Unit,
+    hideIncome: Boolean,
+    onToggleHideIncome: () -> Unit,
     onOpenCategories: () -> Unit,
     onOpenUpload: () -> Unit,
 ) {
@@ -223,6 +247,15 @@ private fun HomeHeader(
             contentDescription = "下个月",
             onClick = { onShiftMonth(1) },
         )
+        IconButton(
+            iconRes = if (hideIncome) {
+                LucideR.drawable.lucide_ic_eye_off
+            } else {
+                LucideR.drawable.lucide_ic_eye
+            },
+            contentDescription = if (hideIncome) "显示收入" else "隐藏收入",
+            onClick = onToggleHideIncome,
+        )
         SecondaryTextButton(text = "分类", onClick = onOpenCategories)
         PrimaryIconButton(
             iconRes = LucideR.drawable.lucide_ic_upload,
@@ -237,6 +270,7 @@ private fun SummaryCard(
     expense: Double,
     income: Double,
     balance: Double,
+    hideIncome: Boolean,
     onClick: () -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
@@ -251,13 +285,18 @@ private fun SummaryCard(
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         SummaryItem(label = "支出", amount = expense, modifier = Modifier.weight(1f))
-        SummaryItem(label = "收入", amount = income, modifier = Modifier.weight(1f))
-        SummaryItem(label = "结余", amount = balance, modifier = Modifier.weight(1f))
+        SummaryItem(label = "收入", amount = income, masked = hideIncome, modifier = Modifier.weight(1f))
+        SummaryItem(label = "结余", amount = balance, masked = hideIncome, modifier = Modifier.weight(1f))
     }
 }
 
 @Composable
-private fun SummaryItem(label: String, amount: Double, modifier: Modifier = Modifier) {
+private fun SummaryItem(
+    label: String,
+    amount: Double,
+    modifier: Modifier = Modifier,
+    masked: Boolean = false,
+) {
     val colors = MaterialTheme.xledgerColors
     Column(modifier = modifier) {
         Text(
@@ -266,7 +305,7 @@ private fun SummaryItem(label: String, amount: Double, modifier: Modifier = Modi
             color = colors.textSecondary,
         )
         Text(
-            text = "¥%.2f".format(amount),
+            text = if (masked) "¥****" else "¥%.2f".format(amount),
             style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Bold,
             color = colors.textPrimary,
@@ -277,6 +316,7 @@ private fun SummaryItem(label: String, amount: Double, modifier: Modifier = Modi
 @Composable
 private fun FilterRow(
     selected: TransactionFilter,
+    hideIncome: Boolean,
     onSelect: (TransactionFilter) -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
@@ -287,7 +327,7 @@ private fun FilterRow(
             .padding(top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        TransactionFilter.entries.forEach { filter ->
+        TransactionFilter.entries.filter { !hideIncome || it != TransactionFilter.Income }.forEach { filter ->
             val active = filter == selected
             Box(
                 modifier = Modifier
@@ -319,6 +359,7 @@ private fun FilterRow(
 private fun TransactionList(
     groupedByDay: Map<String, List<TransactionEntity>>,
     categoryById: Map<Int, CategoryEntity>,
+    hideIncome: Boolean,
     onOpenEdit: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -365,6 +406,7 @@ private fun TransactionList(
                 DayHeader(
                     transactions = dayTransactions,
                     categoryById = categoryById,
+                    hideIncome = hideIncome,
                 )
             }
             items(dayTransactions, key = { it.transactionId }) { transaction ->
@@ -383,6 +425,7 @@ private fun TransactionList(
 private fun DayHeader(
     transactions: List<TransactionEntity>,
     categoryById: Map<Int, CategoryEntity>,
+    hideIncome: Boolean,
 ) {
     val colors = MaterialTheme.xledgerColors
     val clipboard = LocalClipboardManager.current
@@ -435,7 +478,7 @@ private fun DayHeader(
             modifier = Modifier
                 .border(1.dp, colors.inputBorder, RoundedCornerShape(6.dp))
                 .clickable {
-                    clipboard.setText(AnnotatedString(buildDaySummaryText(transactions, categoryById)))
+                    clipboard.setText(AnnotatedString(buildDaySummaryText(transactions, categoryById, includeIncome = !hideIncome)))
                     Toast.makeText(context, "已复制当天支出情况", Toast.LENGTH_SHORT).show()
                 }
                 .padding(horizontal = 6.dp, vertical = 3.dp),
@@ -466,6 +509,7 @@ private fun DayHeader(
 private fun buildDaySummaryText(
     transactions: List<TransactionEntity>,
     categoryById: Map<Int, CategoryEntity>,
+    includeIncome: Boolean,
 ): String {
     var expense = 0.0
     var income = 0.0
@@ -488,7 +532,7 @@ private fun buildDaySummaryText(
             )
         }
         append("支出合计：¥%.2f".format(expense))
-        append(" 收入合计：¥%.2f".format(income))
+        if (includeIncome) append(" 收入合计：¥%.2f".format(income))
     }
 }
 

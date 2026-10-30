@@ -92,6 +92,26 @@ class TransactionRepository(
         return created
     }
 
+    /**
+     * 按名称找分类：同名（description 完全相同）且收支类型一致的历史交易，取最近一条的分类。
+     * 返回 (description, transactionType) → categoryId，找不到的不在结果里。
+     */
+    suspend fun findCategoryIdsByDescription(
+        names: Collection<Pair<String, Int>>,
+    ): Map<Pair<String, Int>, Int> {
+        val wanted = names.toSet()
+        if (wanted.isEmpty()) return emptyMap()
+        val result = mutableMapOf<Pair<String, Int>, Int>()
+        wanted.map { it.first }.distinct().chunked(500).forEach { chunk ->
+            dao.getCategorizedByDescriptions(chunk).forEach { row ->
+                val key = row.description to row.transactionType
+                // 结果按时间倒序，第一次出现的就是最近一条
+                if (key in wanted) result.putIfAbsent(key, row.categoryId)
+            }
+        }
+        return result
+    }
+
     /** 查询输入列表中已存在于库中的 dedupe_key（导入“可能重复”提示）。 */
     suspend fun getExistingDedupeKeys(inputs: List<CreateTransactionInput>): Set<String> {
         val keys = inputs.map(::createDedupeKey).distinct()

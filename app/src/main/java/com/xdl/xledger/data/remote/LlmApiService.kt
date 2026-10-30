@@ -1,6 +1,5 @@
 package com.xdl.xledger.data.remote
 
-import com.xdl.xledger.data.db.entity.CategoryEntity
 import com.xdl.xledger.data.db.entity.TransactionEntity
 import com.xdl.xledger.data.repository.ConfigRepository
 import com.xdl.xledger.util.CompressedImportImage
@@ -46,18 +45,14 @@ class LlmApiService(
     private val systemPrompt =
         "你从支付记录列表截图中提取交易。逐条阅读图片内容，图片上有几条记录就原样输出几条，严格按列表顺序识别商户/说明、日期时间和金额。" +
             "只输出 JSON，不要解释。金额始终输出正数，收支方向用 0 表示支出、1 表示收入。" +
-            "category 必须从用户给定的可选分类中选一个最可能的分类名输出，绝不允许输出 null，即使不确定也要给出最可能的猜测：" +
-            "有对应的二级分类（缩进的子分类）就直接输出二级分类名，没有合适的二级分类就输出一级分类名。" +
-            "支出记录只能选支出分类，收入记录只能选收入分类。" +
             "禁止自行判断重复或合并记录：即使多条记录的项目名、金额完全一样，也要逐条全部输出，是否重复由系统后续处理，你绝不能省略、合并或去重。" +
             "只有完全无法识别出日期、金额等关键字段的记录才可以不输出。不要输出任何推理过程、分析或解释，直接输出 JSON。"
 
     suspend fun parseTransactionsFromImages(
         images: List<CompressedImportImage>,
         today: String?,
-        categories: List<CategoryEntity>,
     ): List<ParsedTransaction> =
-        parseTransactionsFromImagesWithDebug(images, today, categories).transactions
+        parseTransactionsFromImagesWithDebug(images, today).transactions
 
     /**
      * 识别并保留模型原始返回与思考过程（调试用）。
@@ -70,14 +65,13 @@ class LlmApiService(
     suspend fun parseTransactionsFromImagesWithDebug(
         images: List<CompressedImportImage>,
         today: String?,
-        categories: List<CategoryEntity>,
     ): LlmParseDebugResult {
         if (images.isEmpty()) {
             throw IllegalStateException("没有选择任何图片")
         }
 
         val settings = loadSettings()
-        val body = buildRequest(settings, images, today, categories)
+        val body = buildRequest(settings, images, today)
 
         val responseText = withContext(Dispatchers.IO) {
             val request = Request.Builder()
@@ -167,7 +161,6 @@ class LlmApiService(
         settings: LlmSettings,
         images: List<CompressedImportImage>,
         today: String?,
-        categories: List<CategoryEntity>,
     ): String {
         // 截图里的日期常为“今天”“昨天”或只有月日（如 07-15），必须告知今天日期让模型推算补全
         val todayInstruction = today?.let { date ->
@@ -176,10 +169,8 @@ class LlmApiService(
         }.orEmpty()
         val userText =
             "输出 JSON 格式：{\"transactions\":[{\"occurred_at\":\"ISO 8601 时间\"," +
-                "\"transaction_type\":0,\"amount\":\"28.50\",\"description\":\"交易摘要或 null\"," +
-                "\"category\":\"分类名（必填，必须从可选分类中选一个，不允许 null）\"}]}\n" +
+                "\"transaction_type\":0,\"amount\":\"28.50\",\"description\":\"交易摘要或 null\"}]}\n" +
                 todayInstruction +
-                buildCategoryCandidateText(categories) +
                 "\n请从下面的支付记录截图中逐条提取所有交易：图片上有几条就输出几条，一条都不要省略。"
 
         return json.encodeToString(
@@ -206,35 +197,6 @@ class LlmApiService(
                 ),
             ),
         )
-    }
-
-    /**
-     * 生成可选分类说明，让模型只从用户已有分类里选 category。
-     * 按收支类型分组，一级分类独占一行、二级分类用 "- " 缩进；输出时也保持该层级，便于本地映射。
-     */
-    private fun buildCategoryCandidateText(categories: List<CategoryEntity>): String {
-        if (categories.isEmpty()) {
-            return "\n用户还没有创建任何分类，所有记录的 category 只能输出 null。"
-        }
-
-        fun formatGroup(typeName: String, list: List<CategoryEntity>): String {
-            if (list.isEmpty()) return ""
-            val lines = mutableListOf("[${typeName}分类]")
-            list.filter { it.parentId == null }.forEach { parent ->
-                lines += parent.categoryName
-                list.filter { it.parentId == parent.categoryId }.forEach { child ->
-                    lines += "  - ${child.categoryName}"
-                }
-            }
-            return lines.joinToString("\n")
-        }
-
-        val groupText = listOf(
-            formatGroup("支出", categories.filter { it.transactionType == TransactionEntity.TYPE_EXPENSE }),
-            formatGroup("收入", categories.filter { it.transactionType == TransactionEntity.TYPE_INCOME }),
-        ).filter { it.isNotBlank() }.joinToString("\n\n")
-
-        return "\n可选分类（category 是必填字段，必须从下列分类中选一个最可能的分类名输出，绝不允许输出 null：优先选择带“- ”缩进的二级分类名，一步到位选到最具体的子分类；没有合适的二级分类就选一级分类名。收入记录只能选收入分类、支出记录只能选支出分类）：\n$groupText"
     }
 
     // ---- 响应解析 ----
@@ -336,7 +298,6 @@ class LlmApiService(
                     transactionType = transactionType,
                     amount = amount,
                     description = row.description?.trim()?.takeIf { it.isNotEmpty() },
-                    categoryName = row.category?.trim()?.takeIf { it.isNotEmpty() },
                 ),
             )
         }

@@ -19,6 +19,17 @@ interface TransactionDao {
     @Query("SELECT dedupe_key FROM transactions WHERE dedupe_key IN (:keys)")
     suspend fun getDedupeKeys(keys: List<String>): List<String>
 
+    /**
+     * 导入按名称带出分类：同名且已有分类的历史交易，最近的排在前面。
+     * 调用方需分批传入 [descriptions]（SQLite 绑定参数有上限）。
+     */
+    @Query(
+        "SELECT description, transaction_type AS transactionType, category_id AS categoryId " +
+            "FROM transactions WHERE category_id IS NOT NULL AND description IN (:descriptions) " +
+            "ORDER BY occurred_at DESC, transaction_id DESC",
+    )
+    suspend fun getCategorizedByDescriptions(descriptions: List<String>): List<DescriptionCategory>
+
     @Query("SELECT * FROM transactions WHERE transaction_id = :id LIMIT 1")
     suspend fun getById(id: Int): TransactionEntity?
 
@@ -90,3 +101,10 @@ interface TransactionDao {
     @Query("DELETE FROM transactions")
     suspend fun deleteAll()
 }
+
+/** 同名历史交易的分类，见 [TransactionDao.getCategorizedByDescriptions]。 */
+data class DescriptionCategory(
+    val description: String,
+    val transactionType: Int,
+    val categoryId: Int,
+)
