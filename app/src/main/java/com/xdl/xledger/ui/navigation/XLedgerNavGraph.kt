@@ -30,6 +30,7 @@ import com.xdl.xledger.ui.settings.LlmSettingsScreen
 import com.xdl.xledger.ui.settings.SettingsScreen
 import com.xdl.xledger.ui.stats.CategoryTransactionsScreen
 import com.xdl.xledger.ui.stats.MonthlyCategoryStatsScreen
+import com.xdl.xledger.ui.stats.TopExpensesScreen
 import com.xdl.xledger.ui.theme.xledgerColors
 
 /**
@@ -58,6 +59,9 @@ fun XLedgerNavGraph() {
                 },
                 onOpenMonthlyCategoryStats = { year, month ->
                     navController.navigate(Route.monthlyCategoryStats(year, month))
+                },
+                onOpenTopExpenses = { year, month ->
+                    navController.navigate(Route.topExpenses(year, month))
                 },
             )
         }
@@ -113,6 +117,23 @@ fun XLedgerNavGraph() {
         }
 
         composable(
+            route = Route.TOP_EXPENSES,
+            arguments = listOf(
+                navArgument("year") { type = NavType.IntType },
+                navArgument("month") { type = NavType.IntType },
+            ),
+        ) { backStackEntry ->
+            TopExpensesScreen(
+                year = backStackEntry.arguments?.getInt("year") ?: 0,
+                month = backStackEntry.arguments?.getInt("month") ?: 0,
+                onBack = { navController.popBackStack() },
+                onOpenEdit = { transactionId ->
+                    navController.navigate(Route.editTransaction(transactionId))
+                },
+            )
+        }
+
+        composable(
             route = Route.CATEGORY_TRANSACTIONS,
             arguments = listOf(
                 navArgument("year") { type = NavType.IntType },
@@ -150,6 +171,7 @@ private fun MainTabScaffold(
     onOpenOffsets: () -> Unit,
     onOpenTransactionEdit: (Int) -> Unit,
     onOpenMonthlyCategoryStats: (year: Int, month: Int) -> Unit,
+    onOpenTopExpenses: (year: Int, month: Int) -> Unit,
 ) {
     val tabNavController = rememberNavController()
     val backStackEntry by tabNavController.currentBackStackEntryAsState()
@@ -196,6 +218,7 @@ private fun MainTabScaffold(
                     onOpenCategories = onOpenCategories,
                     onOpenTransactionEdit = onOpenTransactionEdit,
                     onOpenMonthlyCategoryStats = onOpenMonthlyCategoryStats,
+                    onOpenTopExpenses = onOpenTopExpenses,
                 )
             }
             composable(Route.SAVINGS) {

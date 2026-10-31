@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,6 +58,7 @@ fun HomeScreen(
     onOpenCategories: () -> Unit,
     onOpenTransactionEdit: (Int) -> Unit,
     onOpenMonthlyCategoryStats: (year: Int, month: Int) -> Unit,
+    onOpenTopExpenses: (year: Int, month: Int) -> Unit,
     viewModel: HomeViewModel = viewModel(factory = HomeViewModel.Factory),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -84,6 +86,9 @@ fun HomeScreen(
         onOpenMonthlyCategoryStats = {
             onOpenMonthlyCategoryStats(uiState.year, uiState.month)
         },
+        onOpenTopExpenses = {
+            onOpenTopExpenses(uiState.year, uiState.month)
+        },
         onRetry = viewModel::refresh,
     )
 }
@@ -98,6 +103,7 @@ private fun HomeContent(
     onOpenUpload: () -> Unit,
     onOpenCategories: () -> Unit,
     onOpenMonthlyCategoryStats: () -> Unit,
+    onOpenTopExpenses: () -> Unit,
     onRetry: () -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
@@ -176,6 +182,7 @@ private fun HomeContent(
             selected = filter,
             hideIncome = hideIncome,
             onSelect = onSelectFilter,
+            onOpenTopExpenses = onOpenTopExpenses,
         )
 
         when {
@@ -318,6 +325,7 @@ private fun FilterRow(
     selected: TransactionFilter,
     hideIncome: Boolean,
     onSelect: (TransactionFilter) -> Unit,
+    onOpenTopExpenses: () -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
 
@@ -351,6 +359,30 @@ private fun FilterRow(
                     fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                 )
             }
+        }
+        // 查看本月单笔最大的支出
+        Spacer(modifier = Modifier.weight(1f))
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .border(1.dp, colors.inputBorder, RoundedCornerShape(8.dp))
+                .background(colors.card, RoundedCornerShape(8.dp))
+                .clickable(onClick = onOpenTopExpenses)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Icon(
+                painter = painterResource(LucideR.drawable.lucide_ic_arrow_down_wide_narrow),
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(13.dp),
+            )
+            Text(
+                text = "大额支出",
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+            )
         }
     }
 }

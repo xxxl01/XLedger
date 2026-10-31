@@ -49,6 +49,11 @@ object Route {
     fun monthlyCategoryStats(year: Int, month: Int): String =
         "monthly_category_stats?year=$year&month=$month"
 
+    /** 大额支出页（全屏子页，带年月参数）：某月单笔金额最大的若干笔支出。 */
+    const val TOP_EXPENSES = "top_expenses?year={year}&month={month}"
+
+    fun topExpenses(year: Int, month: Int): String = "top_expenses?year=$year&month=$month"
+
     /**
      * 分类明细页（全屏子页）：某月某分类的每条记录。
      * categoryId = -1 表示未分类；includeChildren 为 true 时包含该一级分类下所有二级分类。

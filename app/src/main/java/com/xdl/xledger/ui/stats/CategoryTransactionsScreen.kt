@@ -23,6 +23,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -75,75 +76,94 @@ fun CategoryTransactionsScreen(
             "¥%.2f · 共 ${uiState.items.size} 条".format(uiState.total),
         onBack = onBack,
     ) { innerPadding ->
-        when {
-            uiState.isLoading -> Box(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center,
-            ) { CircularProgressIndicator(color = colors.accent) }
+        RankedTransactionsBody(
+            uiState = uiState,
+            amountColor = amountColor,
+            emptyText = "这个分类本月没有记录",
+            innerPadding = innerPadding,
+            onOpenEdit = onOpenEdit,
+        )
+    }
+}
 
-            uiState.errorMessage != null -> Box(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = uiState.errorMessage.orEmpty(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.expense,
-                )
-            }
+/** 按金额排好序的记录列表（加载 / 出错 / 空态 / 列表），分类明细页与大额支出页共用。 */
+@Composable
+internal fun RankedTransactionsBody(
+    uiState: CategoryTransactionsUiState,
+    amountColor: Color,
+    emptyText: String,
+    innerPadding: PaddingValues,
+    onOpenEdit: (Int) -> Unit,
+) {
+    val colors = MaterialTheme.xledgerColors
+    when {
+        uiState.isLoading -> Box(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentAlignment = Alignment.Center,
+        ) { CircularProgressIndicator(color = colors.accent) }
 
-            uiState.items.isEmpty() -> Box(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "这个分类本月没有记录",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.textSecondary,
-                )
-            }
+        uiState.errorMessage != null -> Box(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = uiState.errorMessage.orEmpty(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.expense,
+            )
+        }
 
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(innerPadding),
-                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                items(uiState.items, key = { it.transaction.transactionId }) { item ->
-                    val transaction = item.transaction
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(colors.card, RoundedCornerShape(8.dp))
-                            .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
-                            .clickable { onOpenEdit(transaction.transactionId) }
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = transaction.description ?: "未命名记录",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = colors.textPrimary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = "${DateTimeFormat.formatMonthDay(transaction.occurredAt)} " +
-                                    "${DateTimeFormat.formatTime(transaction.occurredAt)} · ${item.categoryLabel}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.textSecondary,
-                            )
-                        }
+        uiState.items.isEmpty() -> Box(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = emptyText,
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.textSecondary,
+            )
+        }
+
+        else -> LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(innerPadding),
+            contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            items(uiState.items, key = { it.transaction.transactionId }) { item ->
+                val transaction = item.transaction
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(colors.card, RoundedCornerShape(8.dp))
+                        .border(1.dp, colors.cardBorder, RoundedCornerShape(8.dp))
+                        .clickable { onOpenEdit(transaction.transactionId) }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = MoneyFormat.formatSigned(transaction.amount, transaction.transactionType),
+                            text = transaction.description ?: "未命名记录",
                             style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = amountColor,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = "${DateTimeFormat.formatMonthDay(transaction.occurredAt)} " +
+                                "${DateTimeFormat.formatTime(transaction.occurredAt)} · ${item.categoryLabel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.textSecondary,
                         )
                     }
+                    Text(
+                        text = MoneyFormat.formatSigned(transaction.amount, transaction.transactionType),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = amountColor,
+                    )
                 }
             }
         }
