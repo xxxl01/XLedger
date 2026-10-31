@@ -28,6 +28,7 @@ import com.xdl.xledger.ui.offsets.OffsetsScreen
 import com.xdl.xledger.ui.savings.SavingsScreen
 import com.xdl.xledger.ui.settings.LlmSettingsScreen
 import com.xdl.xledger.ui.settings.SettingsScreen
+import com.xdl.xledger.ui.stats.CategoryTransactionsScreen
 import com.xdl.xledger.ui.stats.MonthlyCategoryStatsScreen
 import com.xdl.xledger.ui.theme.xledgerColors
 
@@ -103,6 +104,35 @@ fun XLedgerNavGraph() {
                 year = year,
                 month = month,
                 onBack = { navController.popBackStack() },
+                onOpenCategoryTransactions = { transactionType, categoryId, includeChildren ->
+                    navController.navigate(
+                        Route.categoryTransactions(year, month, transactionType, categoryId, includeChildren),
+                    )
+                },
+            )
+        }
+
+        composable(
+            route = Route.CATEGORY_TRANSACTIONS,
+            arguments = listOf(
+                navArgument("year") { type = NavType.IntType },
+                navArgument("month") { type = NavType.IntType },
+                navArgument("type") { type = NavType.IntType },
+                navArgument("categoryId") { type = NavType.IntType },
+                navArgument("includeChildren") { type = NavType.BoolType },
+            ),
+        ) { backStackEntry ->
+            val args = backStackEntry.arguments
+            CategoryTransactionsScreen(
+                year = args?.getInt("year") ?: 0,
+                month = args?.getInt("month") ?: 0,
+                transactionType = args?.getInt("type") ?: 0,
+                categoryId = args?.getInt("categoryId")?.takeIf { it >= 0 },
+                includeChildren = args?.getBoolean("includeChildren") ?: false,
+                onBack = { navController.popBackStack() },
+                onOpenEdit = { transactionId ->
+                    navController.navigate(Route.editTransaction(transactionId))
+                },
             )
         }
     }

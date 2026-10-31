@@ -20,6 +20,8 @@ import kotlinx.coroutines.launch
 /** 单个分类的统计行（一级聚合行或二级明细行）。 */
 data class CategoryStat(
     val key: String,
+    /** 二级分类 id，用于点击后查看该分类的记录。 */
+    val categoryId: Int,
     val name: String,
     val amount: Double,
     /** 占比：一级行相对该收支类型总额；二级行相对其一级分类金额。 */
@@ -28,6 +30,7 @@ data class CategoryStat(
 
 /** 一级分类聚合行，可展开查看二级明细。 */
 data class CategoryGroup(
+    /** 一级分类 id；未分类为 null。 */
     val categoryId: Int?,
     val name: String,
     val amount: Double,
@@ -61,9 +64,10 @@ class MonthlyCategoryStatsViewModel(
         load()
     }
 
-    fun load() {
+    /** [showLoading] 为 false 时静默刷新（从明细页返回），不切到加载态，保留滚动位置。 */
+    fun load(showLoading: Boolean = true) {
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            _uiState.update { it.copy(isLoading = showLoading, errorMessage = null) }
             try {
                 val transactions = transactionRepository.getByMonth(year, month)
                 val categories = categoryRepository.getAll()
@@ -100,7 +104,8 @@ class MonthlyCategoryStatsViewModel(
         data class Agg(
             val name: String,
             var amount: Double = 0.0,
-            val children: LinkedHashMap<String, Double> = LinkedHashMap(),
+            /** 二级分类 id → (名称, 金额)。 */
+            val children: LinkedHashMap<Int, Pair<String, Double>> = LinkedHashMap(),
         )
         val aggs = LinkedHashMap<String, Agg>()
 
@@ -124,8 +129,8 @@ class MonthlyCategoryStatsViewModel(
                     if (parent != null) {
                         val agg = aggs.getOrPut("c${parent.categoryId}") { Agg(parent.categoryName) }
                         agg.amount += amount
-                        agg.children[category.categoryName] =
-                            (agg.children[category.categoryName] ?: 0.0) + amount
+                        val previous = agg.children[category.categoryId]?.second ?: 0.0
+                        agg.children[category.categoryId] = category.categoryName to (previous + amount)
                     } else {
                         // 父分类缺失（正常删除流程会级联清理），按自身作为一级展示
                         val agg = aggs.getOrPut("c${category.categoryId}") { Agg(category.categoryName) }
@@ -137,7 +142,15 @@ class MonthlyCategoryStatsViewModel(
 
         val rows = aggs.map { (key, agg) ->
             val children = agg.children
-                .map { (name, childAmount) -> CategoryStat(key = "$key#$name", name = name, amount = childAmount, percent = 0.0) }
+                .map { (childId, child) ->
+                    CategoryStat(
+                        key = "$key#$childId",
+                        categoryId = childId,
+                        name = child.first,
+                        amount = child.second,
+                        percent = 0.0,
+                    )
+                }
                 .sortedByDescending { it.amount }
             CategoryGroup(
                 categoryId = key.removePrefix("c").toIntOrNull(),

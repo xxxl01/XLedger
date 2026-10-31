@@ -48,6 +48,23 @@ object Route {
 
     fun monthlyCategoryStats(year: Int, month: Int): String =
         "monthly_category_stats?year=$year&month=$month"
+
+    /**
+     * 分类明细页（全屏子页）：某月某分类的每条记录。
+     * categoryId = -1 表示未分类；includeChildren 为 true 时包含该一级分类下所有二级分类。
+     */
+    const val CATEGORY_TRANSACTIONS =
+        "category_transactions?year={year}&month={month}&type={type}&categoryId={categoryId}&includeChildren={includeChildren}"
+
+    fun categoryTransactions(
+        year: Int,
+        month: Int,
+        transactionType: Int,
+        categoryId: Int?,
+        includeChildren: Boolean,
+    ): String =
+        "category_transactions?year=$year&month=$month&type=$transactionType" +
+            "&categoryId=${categoryId ?: -1}&includeChildren=$includeChildren"
 }
 
 /** 底部 Tab 定义。 */

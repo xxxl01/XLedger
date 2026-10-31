@@ -10,48 +10,57 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.composables.icons.lucide.R as LucideR
+import com.xdl.xledger.data.db.entity.TransactionEntity
 import com.xdl.xledger.ui.common.SubPageScaffold
 import com.xdl.xledger.ui.theme.xledgerColors
 import com.xdl.xledger.util.DateTimeFormat
 import java.util.Locale
 
 /**
- * 分类统计页：按月查看支出 / 收入按一级分类聚合的占比，
- * 点击一级分类可展开查看其下二级分类明细。
+ * 分类统计页：按月查看支出 / 收入按一级分类聚合的占比，二级分类默认展开；
+ * 点击一级或二级分类进入明细页，按金额从大到小查看该分类的每条记录。
  */
 @Composable
 fun MonthlyCategoryStatsScreen(
     year: Int,
     month: Int,
     onBack: () -> Unit,
+    onOpenCategoryTransactions: (transactionType: Int, categoryId: Int?, includeChildren: Boolean) -> Unit,
     viewModel: MonthlyCategoryStatsViewModel = viewModel(
         factory = MonthlyCategoryStatsViewModel.factory(year, month),
     ),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val colors = MaterialTheme.xledgerColors
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // 从明细页改了记录后返回，静默刷新统计
+    DisposableEffect(lifecycleOwner, viewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.load(showLoading = false)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     SubPageScaffold(
         title = "分类统计",
@@ -100,10 +109,16 @@ fun MonthlyCategoryStatsScreen(
                     StatPanel(
                         title = "支出分类",
                         groups = uiState.expenseStats,
+                        onOpen = { categoryId, includeChildren ->
+                            onOpenCategoryTransactions(TransactionEntity.TYPE_EXPENSE, categoryId, includeChildren)
+                        },
                     )
                     StatPanel(
                         title = "收入分类",
                         groups = uiState.incomeStats,
+                        onOpen = { categoryId, includeChildren ->
+                            onOpenCategoryTransactions(TransactionEntity.TYPE_INCOME, categoryId, includeChildren)
+                        },
                     )
                     Box(modifier = Modifier.padding(bottom = 24.dp))
                 }
@@ -146,9 +161,12 @@ private fun TotalItem(label: String, amount: Double, color: androidx.compose.ui.
 }
 
 @Composable
-private fun StatPanel(title: String, groups: List<CategoryGroup>) {
+private fun StatPanel(
+    title: String,
+    groups: List<CategoryGroup>,
+    onOpen: (categoryId: Int?, includeChildren: Boolean) -> Unit,
+) {
     val colors = MaterialTheme.xledgerColors
-    var expandedKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     Column(
         modifier = Modifier
@@ -173,29 +191,14 @@ private fun StatPanel(title: String, groups: List<CategoryGroup>) {
             )
         } else {
             groups.forEach { group ->
-                val expanded = expandedKeys.contains(group.name)
+                // 一级行：查看该一级分类（含其下所有二级分类）的全部记录
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            expandedKeys = if (expanded) expandedKeys - group.name else expandedKeys + group.name
-                        }
+                        .clickable { onOpen(group.categoryId, true) }
                         .padding(vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (group.children.isNotEmpty()) {
-                        Icon(
-                            painter = painterResource(
-                                if (expanded) LucideR.drawable.lucide_ic_chevron_down
-                                else LucideR.drawable.lucide_ic_chevron_right,
-                            ),
-                            contentDescription = null,
-                            tint = colors.textSecondary,
-                            modifier = Modifier.padding(end = 2.dp).size(14.dp),
-                        )
-                    } else {
-                        Box(modifier = Modifier.size(16.dp))
-                    }
                     Text(
                         text = group.name,
                         style = MaterialTheme.typography.bodyMedium,
@@ -215,12 +218,14 @@ private fun StatPanel(title: String, groups: List<CategoryGroup>) {
                         color = colors.textPrimary,
                     )
                 }
-                if (expanded && group.children.isNotEmpty()) {
+                // 二级行默认展开：点击只看该二级分类的记录
+                if (group.children.isNotEmpty()) {
                     group.children.forEach { child ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(start = 20.dp, top = 2.dp, bottom = 2.dp),
+                                .clickable { onOpen(child.categoryId, false) }
+                                .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
