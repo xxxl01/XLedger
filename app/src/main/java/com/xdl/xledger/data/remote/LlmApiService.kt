@@ -17,12 +17,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.LocalTime
-import java.time.OffsetDateTime
-import java.time.ZoneId
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
@@ -57,7 +51,7 @@ class LlmApiService(
     /**
      * 识别并保留模型原始返回与思考过程（调试用）。
      *
-     * [today] 为 "今天是哪天"（yyyy-MM-dd），用于补全截图中的相对日期（今天/昨天）与月日。
+     * [today] 为 "今天是哪天"（yyyy-MM-dd）：模型原样抄写截图上的日期文字，相对日期（昨天/前天）与缺失的年份按它在本地推算。
      *
      * 请求级错误（未配置 Key、网络失败、HTTP 错误）仍抛出异常；
      * 请求成功但返回内容无法解析时不抛，而是通过 [LlmParseDebugResult.parseError] 返回原因。
@@ -71,7 +65,7 @@ class LlmApiService(
         }
 
         val settings = loadSettings()
-        val body = buildRequest(settings, images, today)
+        val body = buildRequest(settings, images)
 
         val responseText = withContext(Dispatchers.IO) {
             val request = Request.Builder()
@@ -160,18 +154,16 @@ class LlmApiService(
     private fun buildRequest(
         settings: LlmSettings,
         images: List<CompressedImportImage>,
-        today: String?,
     ): String {
-        // 截图里的日期常为“今天”“昨天”或只有月日（如 07-15），必须告知今天日期让模型推算补全
-        val todayInstruction = today?.let { date ->
-            "今天是 $date。截图中出现的“今天”“昨天”“前天”等相对日期，以及只有月日（如 07-15）的日期，" +
-                "都必须按今天推算并补全为具体的年月日；occurred_at 输出完整的 ISO 8601 日期时间。"
-        }.orEmpty()
+        // 日期不让模型算：原样抄下截图上的日期文字，相对日期与缺失的年份由 [OccurredAtParser] 按今天推算
         val userText =
-            "输出 JSON 格式：{\"transactions\":[{\"occurred_at\":\"ISO 8601 时间\"," +
+            "输出 JSON 格式：{\"transactions\":[{\"occurred_at\":\"截图上的日期时间原文\"," +
                 "\"transaction_type\":0,\"amount\":\"28.50\",\"description\":\"交易摘要或 null\"}]}\n" +
-                todayInstruction +
-                "\n请从下面的支付记录截图中逐条提取所有交易：图片上有几条就输出几条，一条都不要省略。"
+                "occurred_at 必须原样抄写截图上该条记录的日期时间文字，不要换算、不要补全年份、不要改成其他格式，" +
+                "也不要自行推算“今天”“昨天”“前天”对应的日期。例如截图写“11月3日 12:30”就输出“11月3日 12:30”，" +
+                "写“昨天 20:54”就输出“昨天 20:54”，写“2026-11-03 12:30:00”就输出“2026-11-03 12:30:00”。" +
+                "如果截图里该条记录没有写时间，只输出日期原文。\n" +
+                "请从下面的支付记录截图中逐条提取所有交易：图片上有几条就输出几条，一条都不要省略。"
 
         return json.encodeToString(
             ChatCompletionsRequest.serializer(),
@@ -286,7 +278,10 @@ class LlmApiService(
         val result = mutableListOf<ParsedTransaction>()
 
         for (row in rows) {
-            val occurredAt = normalizeOccurredAt(row.occurredAt, today)
+            val occurredAt = OccurredAtParser.parse(
+                row.occurredAt,
+                today?.let { runCatching { LocalDate.parse(it) }.getOrNull() },
+            )
             val transactionType = normalizeTransactionType(row.transactionType)
             val amount = normalizeAmount(row.amount)
             if (occurredAt == null || transactionType == null || amount == null) {
@@ -321,93 +316,5 @@ class LlmApiService(
                 TransactionEntity.TYPE_INCOME
             else -> raw.toIntOrNull()?.takeIf { it == 0 || it == 1 }
         }
-    }
-
-    private fun normalizeOccurredAt(value: String?, today: String?): String? {
-        if (value.isNullOrBlank()) return null
-        val raw = value.trim()
-
-        // ISO 带时区
-        runCatching { ZonedDateTime.parse(raw).toInstant() }
-            .getOrNull()?.let { return TimeFormat.toIsoString(it) }
-        runCatching { OffsetDateTime.parse(raw).toInstant() }
-            .getOrNull()?.let { return TimeFormat.toIsoString(it) }
-
-        // ISO 本地日期时间（无时区，如 2026-08-18T20:54:00 / 2026-08-18T20:54:00.000），
-        // 按本地时区解释，与 JS new Date(value) 行为一致
-        runCatching { LocalDateTime.parse(raw).atZone(ZoneId.systemDefault()).toInstant() }
-            .getOrNull()?.let { return TimeFormat.toIsoString(it) }
-
-        // 完整日期时间（本地时区）
-        YEAR_FORMATS.forEach { formatter ->
-            runCatching {
-                LocalDateTime.parse(raw, formatter)
-                    .atZone(ZoneId.systemDefault())
-                    .toInstant()
-            }.getOrNull()?.let { return TimeFormat.toIsoString(it) }
-        }
-
-        // 相对日期（今天 / 昨天 / 前天，可带时间）：按“今天是哪天”推算
-        val todayDate = today?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        if (todayDate != null) {
-            val relative = RELATIVE_DAY_REGEX.find(raw)
-            if (relative != null) {
-                val dayOffset = when (relative.groupValues[1]) {
-                    "今天" -> 0L
-                    "昨天" -> 1L
-                    else -> 2L
-                }
-                val time = relative.groupValues[2].ifEmpty { "00:00" }
-                runCatching {
-                    LocalDateTime.of(todayDate.minusDays(dayOffset), LocalTime.parse(time))
-                        .atZone(ZoneId.systemDefault())
-                        .toInstant()
-                }.getOrNull()?.let { return TimeFormat.toIsoString(it) }
-            }
-        }
-
-        // 只有月日（如 07-15 12:30 / 7月15日 12:30）：用今天的年份补全
-        val year = todayDate?.year
-        if (year != null) {
-            val normalized = raw.replace('/', '-')
-            YEAR_FORMATS.forEach { formatter ->
-                runCatching {
-                    LocalDateTime.parse("$year-$normalized", formatter)
-                        .atZone(ZoneId.systemDefault())
-                        .toInstant()
-                }.getOrNull()?.let { return TimeFormat.toIsoString(it) }
-            }
-            // 中文月日格式：7月15日 / 7月15日 12:30
-            val monthDay = MONTH_DAY_REGEX.find(raw)
-            if (monthDay != null) {
-                val month = monthDay.groupValues[1].toInt()
-                val day = monthDay.groupValues[2].toInt()
-                val time = monthDay.groupValues[3].trim().ifEmpty { "00:00" }
-                runCatching {
-                    LocalDateTime.of(LocalDate.of(year, month, day), LocalTime.parse(time))
-                        .atZone(ZoneId.systemDefault())
-                        .toInstant()
-                }.getOrNull()?.let { return TimeFormat.toIsoString(it) }
-            }
-        }
-
-        return null
-    }
-
-    companion object {
-        private val YEAR_FORMATS = listOf(
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
-            DateTimeFormatter.ofPattern("yyyy-MM-dd"),
-            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss"),
-            DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm"),
-            DateTimeFormatter.ofPattern("yyyy/MM/dd"),
-        )
-
-        /** 中文月日（如 7月15日 12:30），年份用“今天是哪天”补全。 */
-        private val MONTH_DAY_REGEX = Regex("(\\d{1,2})月(\\d{1,2})日\\s*(\\d{1,2}:\\d{2}(?::\\d{2})?)?")
-
-        /** 相对日期（今天/昨天/前天）后跟可选时间，如 “今天 12:30”。 */
-        private val RELATIVE_DAY_REGEX = Regex("(今天|昨天|前天)\\s*(\\d{1,2}:\\d{2}(?::\\d{2})?)?")
     }
 }
