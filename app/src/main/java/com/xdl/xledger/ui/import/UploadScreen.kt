@@ -21,8 +21,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -31,7 +29,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,9 +55,6 @@ import com.xdl.xledger.ui.theme.xledgerColors
 import com.xdl.xledger.util.BitmapLoader
 import com.xdl.xledger.util.DateTimeFormat
 import com.xdl.xledger.util.MoneyFormat
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneOffset
 
 /**
  * 截图导入页：选择支付记录截图 → 压缩 → LLM 识别 → 勾选入库。
@@ -119,7 +113,6 @@ fun UploadScreen(
                 item(key = "images") {
                     ImagePanel(
                         state = uiState,
-                        onTodayDateChange = viewModel::setTodayDate,
                         onPickImages = {
                             pickImageLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
@@ -265,16 +258,13 @@ private enum class StepStatus { Pending, Active, Done }
 
 // ---- 图片面板 ----
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ImagePanel(
     state: UploadUiState,
-    onTodayDateChange: (LocalDate) -> Unit,
     onPickImages: () -> Unit,
     onRemoveImage: (String) -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
-    var showDatePicker by remember { mutableStateOf(false) }
 
     Column {
         Row(
@@ -293,37 +283,6 @@ private fun ImagePanel(
                     fontWeight = FontWeight.Bold,
                     color = colors.textPrimary,
                 )
-                Text(
-                    text = "今天是哪天",
-                    fontSize = 11.sp,
-                    color = colors.textSecondary,
-                )
-            }
-            // “今天是哪天”日期选择框：支付宝截图里最新日期常为“今天”这类相对日期
-            Box(
-                modifier = Modifier
-                    .border(1.dp, colors.inputBorder, RoundedCornerShape(8.dp))
-                    .clickable(enabled = !state.isWorking, onClick = { showDatePicker = true })
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(LucideR.drawable.lucide_ic_calendar),
-                        contentDescription = null,
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Text(
-                        text = state.todayDate.toString(),
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colors.textPrimary,
-                    )
-                }
             }
             if (state.selectedImages.isNotEmpty()) {
                 Box(
@@ -372,38 +331,6 @@ private fun ImagePanel(
                     )
                 }
             }
-        }
-    }
-
-    if (showDatePicker) {
-        // DatePicker 的选中毫秒按 UTC 零点解释，避免时区偏移导致日期错一天
-        val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = state.todayDate
-                .atStartOfDay(ZoneOffset.UTC)
-                .toInstant()
-                .toEpochMilli(),
-        )
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        datePickerState.selectedDateMillis?.let { millis ->
-                            onTodayDateChange(
-                                Instant.ofEpochMilli(millis)
-                                    .atZone(ZoneOffset.UTC)
-                                    .toLocalDate(),
-                            )
-                        }
-                        showDatePicker = false
-                    },
-                ) { Text("确定") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
-            },
-        ) {
-            DatePicker(state = datePickerState)
         }
     }
 }

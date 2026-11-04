@@ -46,8 +46,6 @@ data class ImportCandidate(
 data class UploadUiState(
     val step: UploadStep = UploadStep.Pick,
     val isWorking: Boolean = false,
-    /** “今天是哪天”：截图中的相对日期（今天/昨天）与月日按此日期补全。 */
-    val todayDate: LocalDate = LocalDate.now(),
     val selectedImages: List<SelectedImage> = emptyList(),
     val candidates: List<ImportCandidate> = emptyList(),
     val selectedIndexes: Set<Int> = emptySet(),
@@ -65,10 +63,6 @@ class UploadViewModel(
 
     private val _uiState = MutableStateFlow(UploadUiState())
     val uiState: StateFlow<UploadUiState> = _uiState.asStateFlow()
-
-    fun setTodayDate(date: LocalDate) {
-        _uiState.update { it.copy(todayDate = date) }
-    }
 
     /** 选择图片后进入 ready 步骤，并清空上次识别结果。 */
     fun addImages(uris: List<String>) {
@@ -114,11 +108,11 @@ class UploadViewModel(
                 }
 
                 _uiState.update { it.copy(step = UploadStep.Llm) }
-                // 传“今天是哪天”，让模型把截图中的相对日期与月日补全为具体日期；
-                // 分类不交给模型，识别后由程序按名称到库里找同名交易带出
+                // 模型只原样抄写截图上的日期文字；“昨天”等相对日期与缺失的年份由程序按识别当天推算，
+                // 分类也不交给模型，识别后由程序按名称到库里找同名交易带出
                 val debugResult = llmApiService.parseTransactionsFromImagesWithDebug(
                     compressed,
-                    state.todayDate.toString(),
+                    LocalDate.now().toString(),
                 )
                 _uiState.update { it.copy(llmDebug = debugResult) }
 
