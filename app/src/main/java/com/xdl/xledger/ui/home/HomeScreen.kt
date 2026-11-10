@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -108,6 +109,8 @@ private fun HomeContent(
 ) {
     val colors = MaterialTheme.xledgerColors
     val hideIncome = uiState.hideIncome
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     // 隐藏收入时，收入记录整体不进入列表；汇总里的收入和结余（结余会暴露收入）单独遮住
     val visibleTransactions = remember(uiState.transactions, hideIncome) {
         if (hideIncome) {
@@ -183,6 +186,22 @@ private fun HomeContent(
             hideIncome = hideIncome,
             onSelect = onSelectFilter,
             onOpenTopExpenses = onOpenTopExpenses,
+            canCopyMonth = !uiState.isLoading && uiState.errorMessage == null &&
+                visibleTransactions.any { MoneyFormat.toCents(it.amount) > 0L },
+            onCopyMonth = {
+                clipboard.setText(
+                    AnnotatedString(
+                        buildMonthSummaryText(
+                            year = uiState.year,
+                            month = uiState.month,
+                            transactions = uiState.transactions,
+                            categoryById = categoryById,
+                            includeIncome = !hideIncome,
+                        ),
+                    ),
+                )
+                Toast.makeText(context, "已复制整月账单", Toast.LENGTH_SHORT).show()
+            },
         )
 
         when {
@@ -326,6 +345,8 @@ private fun FilterRow(
     hideIncome: Boolean,
     onSelect: (TransactionFilter) -> Unit,
     onOpenTopExpenses: () -> Unit,
+    canCopyMonth: Boolean,
+    onCopyMonth: () -> Unit,
 ) {
     val colors = MaterialTheme.xledgerColors
 
@@ -334,6 +355,7 @@ private fun FilterRow(
             .fillMaxWidth()
             .padding(top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         TransactionFilter.entries.filter { !hideIncome || it != TransactionFilter.Income }.forEach { filter ->
             val active = filter == selected
@@ -362,6 +384,12 @@ private fun FilterRow(
         }
         // 查看本月单笔最大的支出
         Spacer(modifier = Modifier.weight(1f))
+        IconButton(
+            iconRes = LucideR.drawable.lucide_ic_copy,
+            contentDescription = "复制整月账单",
+            onClick = onCopyMonth,
+            enabled = canCopyMonth,
+        )
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(8.dp))
@@ -659,6 +687,7 @@ internal fun IconButton(
     iconRes: Int,
     contentDescription: String,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     val colors = MaterialTheme.xledgerColors
     Box(
@@ -666,13 +695,13 @@ internal fun IconButton(
             .size(30.dp)
             .clip(RoundedCornerShape(8.dp))
             .border(1.dp, colors.inputBorder, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             painter = painterResource(iconRes),
             contentDescription = contentDescription,
-            tint = colors.textPrimary,
+            tint = if (enabled) colors.textPrimary else colors.disabled,
             modifier = Modifier.size(18.dp),
         )
     }
