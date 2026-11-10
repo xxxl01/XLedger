@@ -12,6 +12,8 @@ import com.xdl.xledger.data.db.entity.TransactionEntity
 import com.xdl.xledger.data.repository.CategoryRepository
 import com.xdl.xledger.data.repository.ConfigRepository
 import com.xdl.xledger.data.repository.TransactionRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,6 +56,7 @@ class HomeViewModel(
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    private var transactionsJob: Job? = null
 
     init {
         refresh()
@@ -109,7 +112,9 @@ class HomeViewModel(
     }
 
     private fun loadTransactions(showLoading: Boolean) {
-        viewModelScope.launch {
+        // 快速切换月份时取消旧查询，避免旧月份结果覆盖当前月份并被复制出去。
+        transactionsJob?.cancel()
+        transactionsJob = viewModelScope.launch {
             if (showLoading || _uiState.value.transactions.isEmpty()) {
                 _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             } else {
@@ -119,6 +124,8 @@ class HomeViewModel(
             try {
                 val transactions = transactionRepository.getByMonth(state.year, state.month)
                 _uiState.update { it.copy(transactions = transactions, isLoading = false) }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 Log.w(TAG, "加载账本失败", error)
                 _uiState.update {
